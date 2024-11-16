@@ -1,0 +1,5 @@
+- The original PPO code by @nikhilbarhate99 was used as a starting point for this project.
+- The project was adapted to the PettingZoo framework.
+- It was tested in the simple_v3 environment.
+- I will later add the MAPPO code here.
+- I will improve the PPO code adding Generalized Advantage Estimation (GAE) and other improvements.

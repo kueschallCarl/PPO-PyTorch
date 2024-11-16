@@ -1,0 +1,10 @@
+{
+  "total_timesteps": 500000,
+  "checkpoint_freq": 10000,
+  "learning_rate": 3e-4,
+  "n_steps": 2048,
+  "batch_size": 64,
+  "n_epochs": 10,
+  "gamma": 0.99,
+  "policy_kwargs": null
+}

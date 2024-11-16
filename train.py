@@ -55,7 +55,7 @@ def train():
     env = PettingZooWrapper(raw_env, num_agents=len(raw_env.possible_agents))
 
     # Set up logging
-    log_dir = "PPO_logs"
+    log_dir = "/logs/PPO_logs"
     if not os.path.exists(log_dir): os.makedirs(log_dir)
     log_dir = log_dir + '/' + env_name + '/'
     if not os.path.exists(log_dir): os.makedirs(log_dir)
@@ -64,7 +64,7 @@ def train():
     log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
 
     # Set up model saving
-    directory = "PPO_preTrained"
+    directory = "/logs/PPO_preTrained"
     if not os.path.exists(directory): os.makedirs(directory)
     directory = directory + '/' + env_name + '/'
     if not os.path.exists(directory): os.makedirs(directory)
