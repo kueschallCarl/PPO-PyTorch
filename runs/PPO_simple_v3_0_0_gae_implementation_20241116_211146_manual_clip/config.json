@@ -27,7 +27,7 @@
             "eps_clip": 0.2,
             "gamma": 0.99,
             "gae_lambda": 0.95,
-            "use_gae": false,
+            "use_gae": true,
             "lr_actor": 0.0003,
             "lr_critic": 0.001,
             "random_seed": 0
@@ -35,7 +35,7 @@
         "device": "cuda:0"
     },
     "metadata": {
-        "timestamp": "2024-11-16 19:11:03",
+        "timestamp": "2024-11-16 21:11:46",
         "python_version": "3.10.15",
         "torch_version": "2.5.1+cu124",
         "cuda_available": true,

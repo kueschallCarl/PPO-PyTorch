@@ -1,0 +1,44 @@
+{
+    "config": {
+        "env": {
+            "env_name": "simple_v3",
+            "max_ep_len": 1000,
+            "max_training_timesteps": 100000,
+            "has_continuous_action_space": true,
+            "continuous_actions": true
+        },
+        "log": {
+            "print_freq": 10000,
+            "log_freq": 2000,
+            "save_model_freq": 100000,
+            "log_dir": "logs/PPO_logs",
+            "model_dir": "logs/PPO_preTrained",
+            "tensorboard_dir": "runs",
+            "run_name": "gae_implementation"
+        },
+        "action": {
+            "action_std": 0.6,
+            "action_std_decay_rate": 0.05,
+            "min_action_std": 0.1,
+            "action_std_decay_freq": 250000
+        },
+        "ppo": {
+            "K_epochs": 80,
+            "eps_clip": 0.2,
+            "gamma": 0.99,
+            "gae_lambda": 0.95,
+            "use_gae": true,
+            "lr_actor": 0.0003,
+            "lr_critic": 0.001,
+            "random_seed": 0
+        },
+        "device": "cuda:0"
+    },
+    "metadata": {
+        "timestamp": "2024-11-16 21:13:53",
+        "python_version": "3.10.15",
+        "torch_version": "2.5.1+cu124",
+        "cuda_available": true,
+        "cuda_device_name": "NVIDIA GeForce RTX 4080"
+    }
+}

@@ -87,7 +87,9 @@ class PPO:
             self.buffer.logprobs.append(action_logprob)
             self.buffer.state_values.append(state_val)
 
-            return action.detach().cpu().numpy().flatten()
+            #return action.detach().cpu().numpy().flatten()
+            #clipping manually to ensure action is within [0, 1], otherwise pettingzoo does it and throws warnings
+            return np.clip(action.detach().cpu().numpy().flatten(), 0.0, 1.0)
         else:
             with torch.no_grad():
                 state = torch.FloatTensor(state).to(device)

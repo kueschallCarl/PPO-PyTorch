@@ -38,7 +38,7 @@ class PPOConfig:
     eps_clip: float = 0.2       # PPO clipping parameter. Higher = larger policy updates
     gamma: float = 0.99         # Discount factor. Higher = more emphasis on future rewards
     gae_lambda: float = 0.95    # GAE parameter. Higher = more emphasis on long-term advantages
-    use_gae: bool = False       # Whether to use Generalized Advantage Estimation
+    use_gae: bool = True       # Whether to use Generalized Advantage Estimation
     lr_actor: float = 0.0003    # Actor learning rate. Higher = faster learning but potential instability
     lr_critic: float = 0.001    # Critic learning rate. Higher = faster value estimation but potential instability
     random_seed: int = 0        # Seed for reproducibility
