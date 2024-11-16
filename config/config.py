@@ -57,7 +57,7 @@ class Config:
 class TestConfig:
     total_test_episodes: int = 10
     render: bool = True
-    frame_delay: float = 0.0  # Delay between frames when rendering (0.0 for no delay)
+    frame_delay: float = 0.3  # Delay between frames when rendering (0.0 for no delay)
     checkpoint_path: str = None  # Will be set in __post_init__
     random_seed: int = 0
 
