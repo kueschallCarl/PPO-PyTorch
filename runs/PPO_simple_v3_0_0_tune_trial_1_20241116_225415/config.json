@@ -1,0 +1,45 @@
+{
+    "config": {
+        "env": {
+            "env_name": "simple_v3",
+            "max_ep_len": 1000,
+            "max_training_timesteps": 100000,
+            "has_continuous_action_space": true,
+            "continuous_actions": true
+        },
+        "log": {
+            "print_freq": 10000,
+            "log_freq": 2000,
+            "save_model_freq": 50000,
+            "log_dir": "logs/PPO_logs",
+            "model_dir": "logs/PPO_preTrained",
+            "tensorboard_dir": "runs",
+            "run_name": "tune_trial_1"
+        },
+        "action": {
+            "action_std": 0.33213011491703415,
+            "action_std_decay_rate": 0.05,
+            "min_action_std": 0.18627848726050925,
+            "action_std_decay_freq": 250000
+        },
+        "ppo": {
+            "K_epochs": 35,
+            "eps_clip": 0.22541997848121967,
+            "gamma": 0.9978963249950561,
+            "gae_lambda": 0.9538018345979127,
+            "use_gae": true,
+            "use_value_clipping": false,
+            "lr_actor": 2.526678796178519e-05,
+            "lr_critic": 1.357031822123483e-05,
+            "random_seed": 0
+        },
+        "device": "cuda:0"
+    },
+    "metadata": {
+        "timestamp": "2024-11-16 22:54:15",
+        "python_version": "3.10.15",
+        "torch_version": "2.5.1+cu124",
+        "cuda_available": true,
+        "cuda_device_name": "NVIDIA GeForce RTX 4080"
+    }
+}

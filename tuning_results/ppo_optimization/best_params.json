@@ -1,0 +1,16 @@
+{
+    "best_params": {
+        "lr_actor": 0.0002882458671671101,
+        "lr_critic": 1.2550977882481167e-05,
+        "gamma": 0.9420058985545153,
+        "gae_lambda": 0.932518401799344,
+        "K_epochs": 29,
+        "eps_clip": 0.2619340808464442,
+        "action_std": 0.973367149233792,
+        "min_action_std": 0.16309453329184345
+    },
+    "best_value": -3.0446373574634307,
+    "study_name": "ppo_optimization",
+    "n_trials": 2,
+    "timestamp": "2024-11-16 22:55:38"
+}

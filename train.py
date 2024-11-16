@@ -37,7 +37,7 @@ def save_config_to_json(cfg: Config, writer_dir: str):
     with open(json_path, 'w') as f:
         json.dump(metadata, f, indent=4)
         
-def train(cfg: Config):
+def train(cfg: Config, return_reward: bool = False):
     print("============================================================================================")
 
     # Create env
@@ -185,19 +185,14 @@ def train(cfg: Config):
         if cfg.env.has_continuous_action_space:
             writer.add_scalar('Policy/action_std', ppo_agents[0].action_std, i_episode)
 
+    final_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0
+    
     log_f.close()
     env.close()
-
-    # Print total training time
-    print("============================================================================================")
-    end_time = datetime.now().replace(microsecond=0)
-    print("Started training at (GMT) : ", start_time)
-    print("Finished training at (GMT) : ", end_time)
-    print("Total training time  : ", end_time - start_time)
-    print("============================================================================================")
-
-    # Only close the single writer
     writer.close()
+    
+    if return_reward:
+        return final_avg_reward
 
 if __name__ == '__main__':
     cfg = Config()
