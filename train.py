@@ -7,7 +7,36 @@ from utils.wrappers import PettingZooWrapper
 from pettingzoo.mpe import simple_v3
 from config.config import Config
 from torch.utils.tensorboard import SummaryWriter
+import json
+from dataclasses import asdict
+import platform
 
+def save_config_to_json(cfg: Config, writer_dir: str):
+    """
+    Save config to a JSON file in the same directory as tensorboard logs
+    """
+    # Convert Config dataclass to dict
+    config_dict = asdict(cfg)
+    
+    # Add additional metadata
+    metadata = {
+        "config": config_dict,
+        "metadata": {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "python_version": platform.python_version(),
+            "torch_version": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_device_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "None"
+        }
+    }
+    
+    # Create json file path
+    json_path = os.path.join(writer_dir, 'config.json')
+    
+    # Save to JSON with nice formatting
+    with open(json_path, 'w') as f:
+        json.dump(metadata, f, indent=4)
+        
 def train(cfg: Config):
     print("============================================================================================")
 
@@ -44,11 +73,22 @@ def train(cfg: Config):
     checkpoint_path = os.path.join(model_dir, 
                                  f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}.pth")
 
-    # Initialize agents
+    # Create writer directory path
+    writer_dir = os.path.join(cfg.log.tensorboard_dir, 
+                           f"{cfg.env.env_name}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    
+    # Create writer
+    writer = SummaryWriter(writer_dir)
+    
+    # Save config to JSON
+    save_config_to_json(cfg, writer_dir)
+
+    # Initialize agents with the writer
     ppo_agents = [
         PPO(state_dim=state_dim,
             action_dim=action_dim,
-            cfg=cfg)
+            cfg=cfg,
+            writer=writer)  # Pass the writer here
         for _ in range(len(raw_env.possible_agents))
     ]
 
@@ -74,10 +114,6 @@ def train(cfg: Config):
     print_running_episodes = 0
     log_running_reward = 0
     log_running_episodes = 0
-
-    # Add tensorboard writer for episode-level metrics
-    writer = SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
-                                       f"{cfg.env.env_name}_training_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
 
     # Start training loop
     start_time = datetime.now().replace(microsecond=0)
@@ -164,10 +200,8 @@ def train(cfg: Config):
     print("Total training time  : ", end_time - start_time)
     print("============================================================================================")
 
-    # Close writers at the end
+    # Only close the single writer
     writer.close()
-    for agent in ppo_agents:
-        agent.writer.close()
 
 if __name__ == '__main__':
     cfg = Config()

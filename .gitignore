@@ -59,6 +59,7 @@ coverage.xml
 *.pth
 *.pt
 *.zip
+*.csv
 
 # Misc
 .DS_Store

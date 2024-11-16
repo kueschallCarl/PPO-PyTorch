@@ -11,7 +11,7 @@ import numpy as np
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 class PPO:
-    def __init__(self, state_dim, action_dim, cfg: Config):
+    def __init__(self, state_dim, action_dim, cfg: Config, writer: SummaryWriter = None):
         self.cfg = cfg
         self.has_continuous_action_space = cfg.env.has_continuous_action_space
         
@@ -47,9 +47,9 @@ class PPO:
 
         self.MseLoss = nn.MSELoss()
 
-        # Add tensorboard writer
-        self.writer = SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
-                                                f"{cfg.env.env_name}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
+        # Use provided writer or create new one
+        self.writer = writer or SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
+                                        f"{cfg.env.env_name}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
         
         # Log network graph
         dummy_state = torch.zeros(1, state_dim).to(cfg.device)
@@ -120,27 +120,50 @@ class PPO:
         
         return advantages
 
+    def compute_simple_advantage(self, rewards, values, dones):
+        """
+        Compute simple advantage using discounted returns - value estimates
+        """
+        returns = []
+        discounted_reward = 0
+        
+        for reward, is_terminal in zip(reversed(rewards), reversed(dones)):
+            if is_terminal:
+                discounted_reward = 0
+            discounted_reward = reward + (self.gamma * discounted_reward)
+            returns.insert(0, discounted_reward)
+        
+        returns = torch.tensor(returns, dtype=torch.float32).to(self.cfg.device)
+        advantages = returns - values
+        
+        return advantages, returns
+
     def update(self):
         old_states = torch.squeeze(torch.stack(self.buffer.states, dim=0)).detach().to(device)
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
         old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
         old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
 
-        # Convert to numpy for GAE calculation
+        # Convert to numpy for advantage calculation
         rewards_np = np.array([r for r in self.buffer.rewards])
         values_np = old_state_values.cpu().numpy()
         dones_np = np.array([d for d in self.buffer.is_terminals])
         
-        # Calculate advantages using GAE
-        advantages_np = self.compute_gae(rewards_np, values_np, dones_np)
-        advantages = torch.FloatTensor(advantages_np).to(device)
+        # Calculate advantages based on config
+        if self.cfg.ppo.use_gae:
+            advantages_np = self.compute_gae(rewards_np, values_np, dones_np)
+            advantages = torch.FloatTensor(advantages_np).to(device)
+            returns = advantages + old_state_values
+        else:
+            advantages, returns = self.compute_simple_advantage(
+                self.buffer.rewards, 
+                old_state_values,
+                self.buffer.is_terminals
+            )
         
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
-        # Calculate returns (used for value loss)
-        returns = advantages + old_state_values
-
         # Track statistics
         avg_loss = 0
         avg_value_loss = 0

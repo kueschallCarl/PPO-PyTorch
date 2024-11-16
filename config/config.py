@@ -32,7 +32,8 @@ class PPOConfig:
     K_epochs: int = 80
     eps_clip: float = 0.2
     gamma: float = 0.99
-    gae_lambda: float = 0.95  # for future GAE implementation
+    gae_lambda: float = 0.95
+    use_gae: bool = False
     lr_actor: float = 0.0003
     lr_critic: float = 0.001
     random_seed: int = 0
