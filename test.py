@@ -55,40 +55,43 @@ def test(cfg: Config, test_cfg: TestConfig):
     print("Loading pretrained model from:", test_cfg.checkpoint_path)
     for agent in ppo_agents:
         agent.load(test_cfg.checkpoint_path)
+        agent.policy_old.eval()  # Set policy network to evaluation mode
+        agent.policy.eval()      # Set policy network to evaluation mode
 
     # Testing loop
     test_running_reward = 0
+    
+    with torch.no_grad():  # Disable gradient computation
+        for ep in range(1, test_cfg.total_test_episodes + 1):
+            state = env.reset()
+            ep_reward = 0
+            
+            for t in range(1, cfg.env.max_ep_len + 1):
+                current_agent = env.current_agent_idx
+                action = ppo_agents[current_agent].select_action(state)
+                state, reward, done, _ = env.step(action)
+                ep_reward += reward
 
-    for ep in range(1, test_cfg.total_test_episodes + 1):
-        state = env.reset()
-        ep_reward = 0
-        
-        for t in range(1, cfg.env.max_ep_len + 1):
-            current_agent = env.current_agent_idx
-            action = ppo_agents[current_agent].select_action(state)
-            state, reward, done, _ = env.step(action)
-            ep_reward += reward
+                # Log step-level metrics
+                writer.add_scalar('Test/step_reward', reward, t + (ep-1)*cfg.env.max_ep_len)
 
-            # Log step-level metrics
-            writer.add_scalar('Test/step_reward', reward, t + (ep-1)*cfg.env.max_ep_len)
+                if test_cfg.render and test_cfg.frame_delay > 0:
+                    time.sleep(test_cfg.frame_delay)
 
-            if test_cfg.render and test_cfg.frame_delay > 0:
-                time.sleep(test_cfg.frame_delay)
+                if done:
+                    break
 
-            if done:
-                break
+            # Clear buffers
+            for agent in ppo_agents:
+                agent.buffer.clear()
 
-        # Clear buffers
-        for agent in ppo_agents:
-            agent.buffer.clear()
+            test_running_reward += ep_reward
+            print(f'Episode: {ep}/{test_cfg.total_test_episodes} \t Reward: {ep_reward:.2f}')
 
-        test_running_reward += ep_reward
-        print(f'Episode: {ep}/{test_cfg.total_test_episodes} \t Reward: {ep_reward:.2f}')
-
-        # Log episode-level metrics
-        writer.add_scalar('Test/episode_reward', ep_reward, ep)
-        writer.add_scalar('Test/episode_length', t, ep)
-        writer.add_scalar('Test/running_average_reward', test_running_reward/ep, ep)
+            # Log episode-level metrics
+            writer.add_scalar('Test/episode_reward', ep_reward, ep)
+            writer.add_scalar('Test/episode_length', t, ep)
+            writer.add_scalar('Test/running_average_reward', test_running_reward/ep, ep)
 
     env.close()
 
