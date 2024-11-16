@@ -2,32 +2,43 @@ import torch
 import torch.nn as nn
 from models.actor_critic import ActorCritic
 from utils.buffer import RolloutBuffer
+from config.config import Config
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 class PPO:
-    def __init__(self, state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, 
-                 has_continuous_action_space, action_std_init):
-        self.has_continuous_action_space = has_continuous_action_space
+    def __init__(self, state_dim, action_dim, cfg: Config):
+        self.cfg = cfg
+        self.has_continuous_action_space = cfg.env.has_continuous_action_space
         
-        if has_continuous_action_space:
-            self.action_std = action_std_init
+        if self.has_continuous_action_space:
+            self.action_std = cfg.action.action_std
         
-        self.gamma = gamma
-        self.eps_clip = eps_clip
-        self.K_epochs = K_epochs
+        self.gamma = cfg.ppo.gamma
+        self.eps_clip = cfg.ppo.eps_clip
+        self.K_epochs = cfg.ppo.K_epochs
         
         self.buffer = RolloutBuffer()
 
-        self.policy = ActorCritic(state_dim, action_dim, has_continuous_action_space, 
-                                action_std_init).to(device)
-        self.policy_old = ActorCritic(state_dim, action_dim, has_continuous_action_space, 
-                                    action_std_init).to(device)
+        self.policy = ActorCritic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            has_continuous_action_space=self.has_continuous_action_space,
+            action_std_init=cfg.action.action_std
+        ).to(cfg.device)
+        
+        self.policy_old = ActorCritic(
+            state_dim=state_dim,
+            action_dim=action_dim,
+            has_continuous_action_space=self.has_continuous_action_space,
+            action_std_init=cfg.action.action_std
+        ).to(cfg.device)
+        
         self.policy_old.load_state_dict(self.policy.state_dict())
         
         self.optimizer = torch.optim.Adam([
-            {'params': self.policy.actor.parameters(), 'lr': lr_actor},
-            {'params': self.policy.critic.parameters(), 'lr': lr_critic}
+            {'params': self.policy.actor.parameters(), 'lr': cfg.ppo.lr_actor},
+            {'params': self.policy.critic.parameters(), 'lr': cfg.ppo.lr_critic}
         ])
 
         self.MseLoss = nn.MSELoss()

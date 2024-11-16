@@ -1,53 +1,22 @@
 import os
-import glob
 from datetime import datetime
 import torch
 import numpy as np
-import gym
 from models.ppo import PPO
 from utils.wrappers import PettingZooWrapper
 from pettingzoo.mpe import simple_v3
+from config.config import Config
 
-def train():
+def train(cfg: Config):
     print("============================================================================================")
 
-    ####### initialize environment hyperparameters ######
-    env_name = "simple_v3"
-    raw_env = simple_v3.parallel_env()
-
-    has_continuous_action_space = True
-
-    max_ep_len = 1000
-    max_training_timesteps = int(3e6)
-
-    print_freq = max_ep_len * 10
-    log_freq = max_ep_len * 2
-    save_model_freq = int(1e5)
-
-    action_std = 0.6
-    action_std_decay_rate = 0.05
-    min_action_std = 0.1
-    action_std_decay_freq = int(2.5e5)
-
-    ################ PPO hyperparameters ################
-    update_timestep = max_ep_len * 4
-    K_epochs = 80
-    eps_clip = 0.2
-    gamma = 0.99
-    lr_actor = 0.0003
-    lr_critic = 0.001
-    random_seed = 0
-    #####################################################
-
-    print("training environment name : " + env_name)
-
     # Create env
-    raw_env = simple_v3.parallel_env(continuous_actions=True)
+    raw_env = simple_v3.parallel_env(continuous_actions=cfg.env.continuous_actions)
     first_agent = raw_env.possible_agents[0]
     
     # Get state and action dimensions
     state_dim = raw_env.observation_space(first_agent).shape[0]
-    if has_continuous_action_space:
+    if cfg.env.has_continuous_action_space:
         action_dim = raw_env.action_space(first_agent).shape[0]
     else:
         action_dim = raw_env.action_space(first_agent).n
@@ -55,32 +24,45 @@ def train():
     env = PettingZooWrapper(raw_env, num_agents=len(raw_env.possible_agents))
 
     # Set up logging
-    log_dir = "/logs/PPO_logs"
-    if not os.path.exists(log_dir): os.makedirs(log_dir)
-    log_dir = log_dir + '/' + env_name + '/'
-    if not os.path.exists(log_dir): os.makedirs(log_dir)
+    if not os.path.exists(cfg.log.log_dir): 
+        os.makedirs(cfg.log.log_dir)
+    log_dir = os.path.join(cfg.log.log_dir, cfg.env.env_name)
+    if not os.path.exists(log_dir): 
+        os.makedirs(log_dir)
     
     run_num = len(next(os.walk(log_dir))[2])
-    log_f_name = log_dir + '/PPO_' + env_name + "_log_" + str(run_num) + ".csv"
+    log_f_name = os.path.join(log_dir, f'PPO_{cfg.env.env_name}_log_{run_num}.csv')
 
     # Set up model saving
-    directory = "/logs/PPO_preTrained"
-    if not os.path.exists(directory): os.makedirs(directory)
-    directory = directory + '/' + env_name + '/'
-    if not os.path.exists(directory): os.makedirs(directory)
+    if not os.path.exists(cfg.log.model_dir): 
+        os.makedirs(cfg.log.model_dir)
+    model_dir = os.path.join(cfg.log.model_dir, cfg.env.env_name)
+    if not os.path.exists(model_dir): 
+        os.makedirs(model_dir)
 
-    checkpoint_path = directory + "PPO_{}_{}_{}.pth".format(env_name, random_seed, run_num)
+    checkpoint_path = os.path.join(model_dir, 
+                                 f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}.pth")
 
     # Initialize agents
     ppo_agents = [
-        PPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip,
-            has_continuous_action_space, action_std) 
+        PPO(state_dim=state_dim,
+            action_dim=action_dim,
+            cfg=cfg)
         for _ in range(len(raw_env.possible_agents))
     ]
 
+    # Set random seed
+    if cfg.ppo.random_seed:
+        print("--------------------------------------------------------------------------------------------")
+        print("setting random seed to ", cfg.ppo.random_seed)
+        torch.manual_seed(cfg.ppo.random_seed)
+        env.seed(cfg.ppo.random_seed)
+        np.random.seed(cfg.ppo.random_seed)
+
     # Logging
     print("Started training at (GMT) : ", datetime.now().replace(microsecond=0))
-    start_time = datetime.now().replace(microsecond=0)
+    print("============================================================================================")
+    
     log_f = open(log_f_name, "w+")
     log_f.write('episode,timestep,reward\n')
 
@@ -92,12 +74,13 @@ def train():
     log_running_reward = 0
     log_running_episodes = 0
 
-    # Main training loop
-    while time_step <= max_training_timesteps:
+    # Start training loop
+    start_time = datetime.now().replace(microsecond=0)
+    while time_step <= cfg.env.max_training_timesteps:
         state = env.reset()
         current_ep_reward = 0
 
-        for t in range(1, max_ep_len+1):
+        for t in range(1, cfg.env.max_ep_len + 1):
             current_agent = env.current_agent_idx
             action = ppo_agents[current_agent].select_action(state)
             state, reward, done, _ = env.step(action)
@@ -109,18 +92,19 @@ def train():
             current_ep_reward += reward
 
             # Update if its time
-            if time_step % update_timestep == 0:
+            if time_step % (cfg.env.max_ep_len * 4) == 0:
                 for agent in ppo_agents:
                     agent.update()
 
             # Decay action std if needed
-            if has_continuous_action_space and time_step % action_std_decay_freq == 0:
+            if cfg.env.has_continuous_action_space and time_step % cfg.action.action_std_decay_freq == 0:
                 for agent in ppo_agents:
-                    agent.decay_action_std(action_std_decay_rate, min_action_std)
+                    agent.decay_action_std(cfg.action.action_std_decay_rate, 
+                                         cfg.action.min_action_std)
 
             # Log if its time
-            if time_step % log_freq == 0:
-                log_avg_reward = log_running_reward / log_running_episodes
+            if time_step % cfg.log.log_freq == 0:
+                log_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0
                 log_avg_reward = round(log_avg_reward, 4)
                 log_f.write('{},{},{}\n'.format(i_episode, time_step, log_avg_reward))
                 log_f.flush()
@@ -128,8 +112,8 @@ def train():
                 log_running_episodes = 0
 
             # Print if its time
-            if time_step % print_freq == 0:
-                print_avg_reward = print_running_reward / print_running_episodes
+            if time_step % cfg.log.print_freq == 0:
+                print_avg_reward = print_running_reward / print_running_episodes if print_running_episodes > 0 else 0
                 print_avg_reward = round(print_avg_reward, 2)
                 print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
                     i_episode, time_step, print_avg_reward))
@@ -137,12 +121,14 @@ def train():
                 print_running_episodes = 0
 
             # Save model if its time
-            if time_step % save_model_freq == 0:
+            if time_step % cfg.log.save_model_freq == 0:
+                print("--------------------------------------------------------------------------------------------")
                 print("saving model at : " + checkpoint_path)
                 for agent in ppo_agents:
                     agent.save(checkpoint_path)
                 print("model saved")
                 print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
+                print("--------------------------------------------------------------------------------------------")
 
             if done:
                 break
@@ -165,7 +151,8 @@ def train():
     print("============================================================================================")
 
 if __name__ == '__main__':
-    train()
+    cfg = Config()
+    train(cfg)
     
     
     
