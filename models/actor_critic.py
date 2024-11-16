@@ -49,8 +49,16 @@ class ActorCritic(nn.Module):
         else:
             print("WARNING : Calling ActorCritic::set_action_std() on discrete action space policy")
 
-    def forward(self):
-        raise NotImplementedError
+    def forward(self, state):
+        """Forward pass for graph visualization and debugging"""
+        if self.has_continuous_action_space:
+            action_mean = self.actor(state)
+            state_value = self.critic(state)
+            return action_mean, state_value
+        else:
+            action_probs = self.actor(state)
+            state_value = self.critic(state)
+            return action_probs, state_value
     
     def act(self, state):
         if self.has_continuous_action_space:

@@ -3,6 +3,9 @@ import torch.nn as nn
 from models.actor_critic import ActorCritic
 from utils.buffer import RolloutBuffer
 from config.config import Config
+from torch.utils.tensorboard import SummaryWriter
+import os
+from datetime import datetime
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -42,6 +45,14 @@ class PPO:
         ])
 
         self.MseLoss = nn.MSELoss()
+
+        # Add tensorboard writer
+        self.writer = SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
+                                                f"{cfg.env.env_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
+        
+        # Log network graph
+        dummy_state = torch.zeros(1, state_dim).to(cfg.device)
+        self.writer.add_graph(self.policy, dummy_state)
 
     def set_action_std(self, new_action_std):
         if self.has_continuous_action_space:
@@ -107,7 +118,13 @@ class PPO:
 
         advantages = rewards.detach() - old_state_values.detach()
 
-        for _ in range(self.K_epochs):
+        # Track statistics
+        avg_loss = 0
+        avg_value_loss = 0
+        avg_policy_loss = 0
+        avg_entropy = 0
+
+        for epoch in range(self.K_epochs):
             logprobs, state_values, dist_entropy = self.policy.evaluate(old_states, old_actions)
             state_values = torch.squeeze(state_values)
             
@@ -116,12 +133,52 @@ class PPO:
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * advantages
 
-            loss = -torch.min(surr1, surr2) + 0.5 * self.MseLoss(state_values, rewards) - 0.01 * dist_entropy
+            # Split losses for logging
+            policy_loss = -torch.min(surr1, surr2)
+            value_loss = 0.5 * self.MseLoss(state_values, rewards)
+            entropy_loss = -0.01 * dist_entropy
+            
+            loss = policy_loss + value_loss + entropy_loss
             
             self.optimizer.zero_grad()
             loss.mean().backward()
             self.optimizer.step()
-            
+
+            # Accumulate statistics
+            avg_loss += loss.mean().item()
+            avg_value_loss += value_loss.mean().item()
+            avg_policy_loss += policy_loss.mean().item()
+            avg_entropy += dist_entropy.mean().item()
+
+        # Log statistics to tensorboard
+        steps = len(self.buffer.rewards)
+        self.total_steps = getattr(self, 'total_steps', 0) + steps
+        
+        # Log average losses
+        self.writer.add_scalar('Loss/total', avg_loss / self.K_epochs, self.total_steps)
+        self.writer.add_scalar('Loss/value', avg_value_loss / self.K_epochs, self.total_steps)
+        self.writer.add_scalar('Loss/policy', avg_policy_loss / self.K_epochs, self.total_steps)
+        self.writer.add_scalar('Policy/entropy', avg_entropy / self.K_epochs, self.total_steps)
+        
+        # Log policy statistics
+        self.writer.add_scalar('Policy/mean_ratio', ratios.mean().item(), self.total_steps)
+        self.writer.add_scalar('Policy/mean_advantage', advantages.mean().item(), self.total_steps)
+        
+        # Log value statistics
+        self.writer.add_scalar('Value/mean_value', state_values.mean().item(), self.total_steps)
+        self.writer.add_scalar('Value/value_std', state_values.std().item(), self.total_steps)
+        
+        # Log histograms
+        self.writer.add_histogram('Policy/action_logprobs', logprobs.detach(), self.total_steps)
+        self.writer.add_histogram('Policy/advantages', advantages.detach(), self.total_steps)
+        self.writer.add_histogram('Value/values', state_values.detach(), self.total_steps)
+        
+        # Log network parameters
+        for name, param in self.policy.named_parameters():
+            self.writer.add_histogram(f'Parameters/{name}', param.data, self.total_steps)
+            if param.grad is not None:
+                self.writer.add_histogram(f'Gradients/{name}', param.grad, self.total_steps)
+
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()
     

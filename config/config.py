@@ -17,6 +17,7 @@ class LogConfig:
     save_model_freq: int = int(1e5)
     log_dir: str = "logs/PPO_logs"
     model_dir: str = "logs/PPO_preTrained"
+    tensorboard_dir: str = "runs"
 
 @dataclass
 class ActionConfig:

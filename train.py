@@ -6,6 +6,7 @@ from models.ppo import PPO
 from utils.wrappers import PettingZooWrapper
 from pettingzoo.mpe import simple_v3
 from config.config import Config
+from torch.utils.tensorboard import SummaryWriter
 
 def train(cfg: Config):
     print("============================================================================================")
@@ -74,6 +75,10 @@ def train(cfg: Config):
     log_running_reward = 0
     log_running_episodes = 0
 
+    # Add tensorboard writer for episode-level metrics
+    writer = SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
+                                       f"{cfg.env.env_name}_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
+
     # Start training loop
     start_time = datetime.now().replace(microsecond=0)
     while time_step <= cfg.env.max_training_timesteps:
@@ -139,6 +144,15 @@ def train(cfg: Config):
         log_running_episodes += 1
         i_episode += 1
 
+        # After episode ends, add these lines:
+        episode_avg_reward = current_ep_reward / t
+        writer.add_scalar('Training/episode_reward', current_ep_reward, i_episode)
+        writer.add_scalar('Training/episode_length', t, i_episode)
+        writer.add_scalar('Training/average_reward', episode_avg_reward, i_episode)
+        
+        if cfg.env.has_continuous_action_space:
+            writer.add_scalar('Policy/action_std', ppo_agents[0].action_std, i_episode)
+
     log_f.close()
     env.close()
 
@@ -149,6 +163,11 @@ def train(cfg: Config):
     print("Finished training at (GMT) : ", end_time)
     print("Total training time  : ", end_time - start_time)
     print("============================================================================================")
+
+    # Close writers at the end
+    writer.close()
+    for agent in ppo_agents:
+        agent.writer.close()
 
 if __name__ == '__main__':
     cfg = Config()
