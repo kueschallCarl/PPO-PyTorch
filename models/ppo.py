@@ -6,6 +6,7 @@ from config.config import Config
 from torch.utils.tensorboard import SummaryWriter
 import os
 from datetime import datetime
+import numpy as np
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -48,7 +49,7 @@ class PPO:
 
         # Add tensorboard writer
         self.writer = SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
-                                                f"{cfg.env.env_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
+                                                f"{cfg.env.env_name}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
         
         # Log network graph
         dummy_state = torch.zeros(1, state_dim).to(cfg.device)
@@ -99,24 +100,46 @@ class PPO:
 
             return action.item()
 
-    def update(self):
-        rewards = []
-        discounted_reward = 0
-        for reward, is_terminal in zip(reversed(self.buffer.rewards), reversed(self.buffer.is_terminals)):
-            if is_terminal:
-                discounted_reward = 0
-            discounted_reward = reward + (self.gamma * discounted_reward)
-            rewards.insert(0, discounted_reward)
+    def compute_gae(self, rewards, values, dones, next_value=0):
+        """
+        Compute Generalized Advantage Estimation (GAE).
+        """
+        advantages = np.zeros_like(rewards, dtype=np.float32)
+        next_advantage = 0
+        
+        for t in reversed(range(len(rewards))):
+            if dones[t]:
+                next_value = 0
+                next_advantage = 0
             
-        rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
-        rewards = (rewards - rewards.mean()) / (rewards.std() + 1e-7)
+            delta = rewards[t] + self.gamma * next_value - values[t]
+            advantages[t] = delta + self.gamma * self.cfg.ppo.gae_lambda * next_advantage * (1 - dones[t])
+            
+            next_advantage = advantages[t]
+            next_value = values[t]
+        
+        return advantages
 
+    def update(self):
         old_states = torch.squeeze(torch.stack(self.buffer.states, dim=0)).detach().to(device)
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
         old_logprobs = torch.squeeze(torch.stack(self.buffer.logprobs, dim=0)).detach().to(device)
         old_state_values = torch.squeeze(torch.stack(self.buffer.state_values, dim=0)).detach().to(device)
 
-        advantages = rewards.detach() - old_state_values.detach()
+        # Convert to numpy for GAE calculation
+        rewards_np = np.array([r for r in self.buffer.rewards])
+        values_np = old_state_values.cpu().numpy()
+        dones_np = np.array([d for d in self.buffer.is_terminals])
+        
+        # Calculate advantages using GAE
+        advantages_np = self.compute_gae(rewards_np, values_np, dones_np)
+        advantages = torch.FloatTensor(advantages_np).to(device)
+        
+        # Normalize advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        # Calculate returns (used for value loss)
+        returns = advantages + old_state_values
 
         # Track statistics
         avg_loss = 0
@@ -135,7 +158,7 @@ class PPO:
 
             # Split losses for logging
             policy_loss = -torch.min(surr1, surr2)
-            value_loss = 0.5 * self.MseLoss(state_values, rewards)
+            value_loss = 0.5 * self.MseLoss(state_values, returns)
             entropy_loss = -0.01 * dist_entropy
             
             loss = policy_loss + value_loss + entropy_loss

@@ -32,7 +32,7 @@ def train(cfg: Config):
         os.makedirs(log_dir)
     
     run_num = len(next(os.walk(log_dir))[2])
-    log_f_name = os.path.join(log_dir, f'PPO_{cfg.env.env_name}_log_{run_num}.csv')
+    log_f_name = os.path.join(log_dir, f'PPO_{cfg.env.env_name}_{cfg.log.run_name}_log_{run_num}.csv')
 
     # Set up model saving
     if not os.path.exists(cfg.log.model_dir): 
@@ -42,7 +42,7 @@ def train(cfg: Config):
         os.makedirs(model_dir)
 
     checkpoint_path = os.path.join(model_dir, 
-                                 f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}.pth")
+                                 f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}.pth")
 
     # Initialize agents
     ppo_agents = [
@@ -77,7 +77,7 @@ def train(cfg: Config):
 
     # Add tensorboard writer for episode-level metrics
     writer = SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
-                                       f"{cfg.env.env_name}_training_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
+                                       f"{cfg.env.env_name}_training_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
 
     # Start training loop
     start_time = datetime.now().replace(microsecond=0)

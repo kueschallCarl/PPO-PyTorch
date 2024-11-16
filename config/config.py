@@ -6,7 +6,7 @@ import torch
 class EnvConfig:
     env_name: str = "simple_v3"
     max_ep_len: int = 1000
-    max_training_timesteps: int = int(3e6)
+    max_training_timesteps: int = int(1e5) #= 100000
     has_continuous_action_space: bool = True
     continuous_actions: bool = True  # for PettingZoo env
 
@@ -18,6 +18,7 @@ class LogConfig:
     log_dir: str = "logs/PPO_logs"
     model_dir: str = "logs/PPO_preTrained"
     tensorboard_dir: str = "runs"
+    run_name: str = "gae_implementation"
 
 @dataclass
 class ActionConfig:

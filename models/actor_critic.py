@@ -78,7 +78,6 @@ class ActorCritic(nn.Module):
     def evaluate(self, state, action):
         if self.has_continuous_action_space:
             action_mean = self.actor(state)
-            
             action_var = self.action_var.expand_as(action_mean)
             cov_mat = torch.diag_embed(action_var).to(device)
             dist = MultivariateNormal(action_mean, cov_mat)
