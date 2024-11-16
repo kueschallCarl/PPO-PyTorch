@@ -7,7 +7,7 @@ class EnvConfig:
     """Configuration for the environment settings"""
     env_name: str = "simple_v3"  # Name of the environment to train in
     max_ep_len: int = 1000       # Maximum steps per episode. Higher = longer episodes, more exploration
-    max_training_timesteps: int = int(1e5)  # Total training steps. Higher = more training time, better convergence
+    max_training_timesteps: int = int(2e5)  # Total training steps. Higher = more training time, better convergence
     has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
     continuous_actions: bool = True  # Specific flag for PettingZoo environments
 
@@ -38,7 +38,8 @@ class PPOConfig:
     eps_clip: float = 0.2       # PPO clipping parameter. Higher = larger policy updates
     gamma: float = 0.99         # Discount factor. Higher = more emphasis on future rewards
     gae_lambda: float = 0.95    # GAE parameter. Higher = more emphasis on long-term advantages
-    use_gae: bool = True       # Whether to use Generalized Advantage Estimation
+    use_gae: bool = True        # Whether to use Generalized Advantage Estimation
+    use_value_clipping: bool = False  # Whether to use value function clipping
     lr_actor: float = 0.0003    # Actor learning rate. Higher = faster learning but potential instability
     lr_critic: float = 0.001    # Critic learning rate. Higher = faster value estimation but potential instability
     random_seed: int = 0        # Seed for reproducibility

@@ -3,7 +3,7 @@
         "env": {
             "env_name": "simple_v3",
             "max_ep_len": 1000,
-            "max_training_timesteps": 100000,
+            "max_training_timesteps": 200000,
             "has_continuous_action_space": true,
             "continuous_actions": true
         },
@@ -28,6 +28,7 @@
             "gamma": 0.99,
             "gae_lambda": 0.95,
             "use_gae": true,
+            "use_value_clipping": false,
             "lr_actor": 0.0003,
             "lr_critic": 0.001,
             "random_seed": 0
@@ -35,7 +36,7 @@
         "device": "cuda:0"
     },
     "metadata": {
-        "timestamp": "2024-11-16 21:13:53",
+        "timestamp": "2024-11-16 22:00:07",
         "python_version": "3.10.15",
         "torch_version": "2.5.1+cu124",
         "cuda_available": true,

@@ -52,23 +52,15 @@ def train(cfg: Config):
         action_dim = raw_env.action_space(first_agent).n
 
     env = PettingZooWrapper(raw_env, num_agents=len(raw_env.possible_agents))
-
-    # Set up logging
-    if not os.path.exists(cfg.log.log_dir): 
-        os.makedirs(cfg.log.log_dir)
-    log_dir = os.path.join(cfg.log.log_dir, cfg.env.env_name)
-    if not os.path.exists(log_dir): 
-        os.makedirs(log_dir)
     
-    run_num = len(next(os.walk(log_dir))[2])
-    log_f_name = os.path.join(log_dir, f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-
     # Set up model saving
     if not os.path.exists(cfg.log.model_dir): 
         os.makedirs(cfg.log.model_dir)
     model_dir = os.path.join(cfg.log.model_dir, cfg.env.env_name)
     if not os.path.exists(model_dir): 
         os.makedirs(model_dir)
+        
+    run_num = len(next(os.walk(cfg.log.tensorboard_dir))[2])
 
     checkpoint_path = os.path.join(model_dir, 
                                  f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
@@ -77,6 +69,10 @@ def train(cfg: Config):
     writer_dir = os.path.join(cfg.log.tensorboard_dir, 
                            f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     
+    #set loggin dir to writer_dir
+    log_dir = writer_dir
+    log_f_name = os.path.join(log_dir, f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+
     # Create writer
     writer = SummaryWriter(writer_dir)
     

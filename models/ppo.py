@@ -181,21 +181,33 @@ class PPO:
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * advantages
 
-            # Split losses for logging
-            policy_loss = -torch.min(surr1, surr2)
-            value_loss = 0.5 * self.MseLoss(state_values, returns)
-            entropy_loss = -0.01 * dist_entropy
+            # Value loss calculation with optional clipping
+            if self.cfg.ppo.use_value_clipping:
+                value_pred_clipped = old_state_values + torch.clamp(
+                    state_values - old_state_values,
+                    -self.eps_clip,
+                    self.eps_clip
+                )
+                value_losses = (state_values - returns).pow(2)
+                value_losses_clipped = (value_pred_clipped - returns).pow(2)
+                value_loss = 0.5 * torch.max(value_losses, value_losses_clipped).mean()
+            else:
+                value_loss = 0.5 * (state_values - returns).pow(2).mean()
+
+            # Final losses
+            policy_loss = -torch.min(surr1, surr2).mean()
+            entropy_loss = -0.01 * dist_entropy.mean()
             
             loss = policy_loss + value_loss + entropy_loss
             
             self.optimizer.zero_grad()
-            loss.mean().backward()
+            loss.backward()
             self.optimizer.step()
 
             # Accumulate statistics
-            avg_loss += loss.mean().item()
-            avg_value_loss += value_loss.mean().item()
-            avg_policy_loss += policy_loss.mean().item()
+            avg_loss += loss.item()
+            avg_value_loss += value_loss.item()
+            avg_policy_loss += policy_loss.item()
             avg_entropy += dist_entropy.mean().item()
 
         # Log statistics to tensorboard
@@ -226,6 +238,16 @@ class PPO:
             self.writer.add_histogram(f'Parameters/{name}', param.data, self.total_steps)
             if param.grad is not None:
                 self.writer.add_histogram(f'Gradients/{name}', param.grad, self.total_steps)
+
+        # Log value function specific metrics
+        self.writer.add_scalar('Value/mean_value_change', (state_values - old_state_values).abs().mean().item(), self.total_steps)
+        if self.cfg.ppo.use_value_clipping:
+            self.writer.add_scalar('Value/clipped_fraction', 
+                (value_losses_clipped < value_losses).float().mean().item(), 
+                self.total_steps)
+            self.writer.add_scalar('Value/clipping_threshold', 
+                self.eps_clip, 
+                self.total_steps)
 
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()
