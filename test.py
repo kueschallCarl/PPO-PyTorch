@@ -8,6 +8,7 @@ from pettingzoo.mpe import simple_v3
 from config.config import Config, TestConfig
 import time
 from dataclasses import dataclass, asdict
+from torch.utils.tensorboard import SummaryWriter
 
 
 def test(cfg: Config, test_cfg: TestConfig):
@@ -36,11 +37,17 @@ def test(cfg: Config, test_cfg: TestConfig):
         env.seed(test_cfg.random_seed)
         np.random.seed(test_cfg.random_seed)
 
-    # Initialize agents
+    # Create writer directory path for test results
+    writer_dir = os.path.join(cfg.log.tensorboard_dir, 
+                           f"TEST_PPO_{cfg.env.env_name}_{test_cfg.random_seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+    writer = SummaryWriter(writer_dir)
+
+    # Initialize agents with the writer
     ppo_agents = [
         PPO(state_dim=state_dim,
             action_dim=action_dim,
-            cfg=cfg)
+            cfg=cfg,
+            writer=writer)
         for _ in range(len(raw_env.possible_agents))
     ]
 
@@ -62,6 +69,9 @@ def test(cfg: Config, test_cfg: TestConfig):
             state, reward, done, _ = env.step(action)
             ep_reward += reward
 
+            # Log step-level metrics
+            writer.add_scalar('Test/step_reward', reward, t + (ep-1)*cfg.env.max_ep_len)
+
             if test_cfg.render and test_cfg.frame_delay > 0:
                 time.sleep(test_cfg.frame_delay)
 
@@ -75,13 +85,22 @@ def test(cfg: Config, test_cfg: TestConfig):
         test_running_reward += ep_reward
         print(f'Episode: {ep}/{test_cfg.total_test_episodes} \t Reward: {ep_reward:.2f}')
 
+        # Log episode-level metrics
+        writer.add_scalar('Test/episode_reward', ep_reward, ep)
+        writer.add_scalar('Test/episode_length', t, ep)
+        writer.add_scalar('Test/running_average_reward', test_running_reward/ep, ep)
+
     env.close()
 
-    # Print summary
-    print("============================================================================================")
+    # Print and log final summary
     avg_test_reward = test_running_reward / test_cfg.total_test_episodes
+    writer.add_scalar('Test/final_average_reward', avg_test_reward, 0)
+    
+    print("============================================================================================")
     print(f"Average test reward: {avg_test_reward:.2f}")
     print("============================================================================================")
+
+    writer.close()
 
 if __name__ == '__main__':
     # Load configs
