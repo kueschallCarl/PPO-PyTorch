@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 import torch
-
+import os
 @dataclass
 class EnvConfig:
     env_name: str = "simple_v3"
@@ -52,3 +52,20 @@ class Config:
             self.log.print_freq = self.env.max_ep_len * 10
         if self.log.log_freq is None:
             self.log.log_freq = self.env.max_ep_len * 2 
+
+@dataclass
+class TestConfig:
+    total_test_episodes: int = 10
+    render: bool = True
+    frame_delay: float = 0.0  # Delay between frames when rendering (0.0 for no delay)
+    checkpoint_path: str = None  # Will be set in __post_init__
+    random_seed: int = 0
+
+    def __post_init__(self):
+        if self.checkpoint_path is None:
+            # Default path based on training configuration
+            self.checkpoint_path = os.path.join(
+                "logs/PPO_preTrained",
+                "simple_v3",
+                f"PPO_simple_v3_0_0_gae_implementation_20241116_182524.pth"
+            )

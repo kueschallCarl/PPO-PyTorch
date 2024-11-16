@@ -61,7 +61,7 @@ def train(cfg: Config):
         os.makedirs(log_dir)
     
     run_num = len(next(os.walk(log_dir))[2])
-    log_f_name = os.path.join(log_dir, f'PPO_{cfg.env.env_name}_{cfg.log.run_name}_log_{run_num}.csv')
+    log_f_name = os.path.join(log_dir, f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
 
     # Set up model saving
     if not os.path.exists(cfg.log.model_dir): 
@@ -71,11 +71,11 @@ def train(cfg: Config):
         os.makedirs(model_dir)
 
     checkpoint_path = os.path.join(model_dir, 
-                                 f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}.pth")
+                                 f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
 
     # Create writer directory path
     writer_dir = os.path.join(cfg.log.tensorboard_dir, 
-                           f"{cfg.env.env_name}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                           f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     
     # Create writer
     writer = SummaryWriter(writer_dir)

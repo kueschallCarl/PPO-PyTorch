@@ -1,120 +1,96 @@
 import os
-import glob
-import time
 from datetime import datetime
-
 import torch
 import numpy as np
+from models.ppo import PPO
+from utils.wrappers import PettingZooWrapper
+from pettingzoo.mpe import simple_v3
+from config.config import Config, TestConfig
+import time
+from dataclasses import dataclass, asdict
 
-import gym
-import roboschool
 
-from PPO import PPO
-
-
-#################################### Testing ###################################
-def test():
+def test(cfg: Config, test_cfg: TestConfig):
+    print("============================================================================================")
+    print(f"Testing started for model: {test_cfg.checkpoint_path}")
     print("============================================================================================")
 
-    ################## hyperparameters ##################
-
-    # env_name = "CartPole-v1"
-    # has_continuous_action_space = False
-    # max_ep_len = 400
-    # action_std = None
-
-    # env_name = "LunarLander-v2"
-    # has_continuous_action_space = False
-    # max_ep_len = 300
-    # action_std = None
-
-    # env_name = "BipedalWalker-v2"
-    # has_continuous_action_space = True
-    # max_ep_len = 1500           # max timesteps in one episode
-    # action_std = 0.1            # set same std for action distribution which was used while saving
-
-    env_name = "RoboschoolWalker2d-v1"
-    has_continuous_action_space = True
-    max_ep_len = 1000           # max timesteps in one episode
-    action_std = 0.1            # set same std for action distribution which was used while saving
-
-    render = True              # render environment on screen
-    frame_delay = 0             # if required; add delay b/w frames
-
-    total_test_episodes = 10    # total num of testing episodes
-
-    K_epochs = 80               # update policy for K epochs
-    eps_clip = 0.2              # clip parameter for PPO
-    gamma = 0.99                # discount factor
-
-    lr_actor = 0.0003           # learning rate for actor
-    lr_critic = 0.001           # learning rate for critic
-
-    #####################################################
-
-    env = gym.make(env_name)
-
-    # state space dimension
-    state_dim = env.observation_space.shape[0]
-
-    # action space dimension
-    if has_continuous_action_space:
-        action_dim = env.action_space.shape[0]
+    # Create env
+    raw_env = simple_v3.parallel_env(continuous_actions=cfg.env.continuous_actions, render_mode='human' if test_cfg.render else None)
+    first_agent = raw_env.possible_agents[0]
+    
+    # Get state and action dimensions
+    state_dim = raw_env.observation_space(first_agent).shape[0]
+    if cfg.env.has_continuous_action_space:
+        action_dim = raw_env.action_space(first_agent).shape[0]
     else:
-        action_dim = env.action_space.n
+        action_dim = raw_env.action_space(first_agent).n
 
-    # initialize a PPO agent
-    ppo_agent = PPO(state_dim, action_dim, lr_actor, lr_critic, gamma, K_epochs, eps_clip, has_continuous_action_space, action_std)
+    env = PettingZooWrapper(raw_env, num_agents=len(raw_env.possible_agents))
 
-    # preTrained weights directory
+    # Set random seed
+    if test_cfg.random_seed:
+        print("--------------------------------------------------------------------------------------------")
+        print("setting random seed to ", test_cfg.random_seed)
+        torch.manual_seed(test_cfg.random_seed)
+        env.seed(test_cfg.random_seed)
+        np.random.seed(test_cfg.random_seed)
 
-    random_seed = 0             #### set this to load a particular checkpoint trained on random seed
-    run_num_pretrained = 0      #### set this to load a particular checkpoint num
+    # Initialize agents
+    ppo_agents = [
+        PPO(state_dim=state_dim,
+            action_dim=action_dim,
+            cfg=cfg)
+        for _ in range(len(raw_env.possible_agents))
+    ]
 
-    directory = "PPO_preTrained" + '/' + env_name + '/'
-    checkpoint_path = directory + "PPO_{}_{}_{}.pth".format(env_name, random_seed, run_num_pretrained)
-    print("loading network from : " + checkpoint_path)
+    # Load pretrained weights
+    print("Loading pretrained model from:", test_cfg.checkpoint_path)
+    for agent in ppo_agents:
+        agent.load(test_cfg.checkpoint_path)
 
-    ppo_agent.load(checkpoint_path)
-
-    print("--------------------------------------------------------------------------------------------")
-
+    # Testing loop
     test_running_reward = 0
 
-    for ep in range(1, total_test_episodes+1):
-        ep_reward = 0
+    for ep in range(1, test_cfg.total_test_episodes + 1):
         state = env.reset()
-
-        for t in range(1, max_ep_len+1):
-            action = ppo_agent.select_action(state)
+        ep_reward = 0
+        
+        for t in range(1, cfg.env.max_ep_len + 1):
+            current_agent = env.current_agent_idx
+            action = ppo_agents[current_agent].select_action(state)
             state, reward, done, _ = env.step(action)
             ep_reward += reward
 
-            if render:
-                env.render()
-                time.sleep(frame_delay)
+            if test_cfg.render and test_cfg.frame_delay > 0:
+                time.sleep(test_cfg.frame_delay)
 
             if done:
                 break
 
-        # clear buffer
-        ppo_agent.buffer.clear()
+        # Clear buffers
+        for agent in ppo_agents:
+            agent.buffer.clear()
 
-        test_running_reward +=  ep_reward
-        print('Episode: {} \t\t Reward: {}'.format(ep, round(ep_reward, 2)))
-        ep_reward = 0
+        test_running_reward += ep_reward
+        print(f'Episode: {ep}/{test_cfg.total_test_episodes} \t Reward: {ep_reward:.2f}')
 
     env.close()
 
+    # Print summary
     print("============================================================================================")
-
-    avg_test_reward = test_running_reward / total_test_episodes
-    avg_test_reward = round(avg_test_reward, 2)
-    print("average test reward : " + str(avg_test_reward))
-
+    avg_test_reward = test_running_reward / test_cfg.total_test_episodes
+    print(f"Average test reward: {avg_test_reward:.2f}")
     print("============================================================================================")
-
 
 if __name__ == '__main__':
-
-    test()
+    # Load configs
+    cfg = Config()
+    test_cfg = TestConfig()
+    
+    # You can modify test config here if needed
+    # test_cfg.render = False
+    # test_cfg.total_test_episodes = 20
+    # test_cfg.frame_delay = 0.1
+    
+    test(cfg, test_cfg)
