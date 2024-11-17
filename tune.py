@@ -120,4 +120,4 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
     
-    tune_hyperparameters(n_trials=2) 
+    tune_hyperparameters(n_trials=80) 

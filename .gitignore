@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.cpython-*.pyc
 *.so
 .Python
 build/
@@ -64,3 +65,14 @@ coverage.xml
 # Misc
 .DS_Store
 *.log
+
+# TensorFlow/ML Logs and Configs
+runs/
+events.out.tfevents.*
+config.json
+result.json
+
+# Database
+*.db
+tuning_results/ppo_optimization/study.db
+models/__pycache__/ppo.cpython-310.pyc
