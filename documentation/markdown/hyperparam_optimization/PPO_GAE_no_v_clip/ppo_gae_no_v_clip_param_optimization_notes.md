@@ -20,7 +20,7 @@
 
 
 ## Notes
-
+- For simple_env, value clipping has not yielded better results than not using it.
 ### Trials of Note
 - Horrible performance
     1. PPO_simple_v3_0_0_tune_trial_13_20241116_231819

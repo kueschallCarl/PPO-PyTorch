@@ -19,10 +19,11 @@ def objective(trial):
     # PPO hyperparameters to tune
     cfg.ppo.lr_actor = trial.suggest_float('lr_actor', 1e-5, 1e-3, log=True)
     cfg.ppo.lr_critic = trial.suggest_float('lr_critic', 1e-5, 1e-3, log=True)
-    cfg.ppo.gamma = trial.suggest_float('gamma', 0.9, 0.9999)
-    cfg.ppo.gae_lambda = trial.suggest_float('gae_lambda', 0.9, 0.99)
-    cfg.ppo.K_epochs = trial.suggest_int('K_epochs', 5, 100)
+    #cfg.ppo.gamma = trial.suggest_float('gamma', 0.9, 0.9999)
+    #cfg.ppo.gae_lambda = trial.suggest_float('gae_lambda', 0.9, 0.99)
+    #cfg.ppo.K_epochs = trial.suggest_int('K_epochs', 5, 100)
     cfg.ppo.eps_clip = trial.suggest_float('eps_clip', 0.1, 0.3)
+    cfg.ppo.use_value_clipping = trial.suggest_categorical('use_value_clipping', [True, False])
     
     # Action space exploration parameters
     cfg.action.action_std = trial.suggest_float('action_std', 0.1, 1.0)
@@ -68,16 +69,22 @@ def tune_hyperparameters(n_trials=50, study_name="ppo_optimization"):
         n_trials (int): Number of trials to run
         study_name (str): Name of the study for saving results
     """
-    # Create study directory
+    # Add timestamp to study name
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    study_name = f"{study_name}_{timestamp}"
+    
+    # Create study directory with timestamp
     study_dir = os.path.join("tuning_results", study_name)
     os.makedirs(study_dir, exist_ok=True)
+    
+    # Create new database file with timestamp
+    db_path = os.path.join(study_dir, "study.db")
     
     # Create and run study
     study = optuna.create_study(
         study_name=study_name,
         direction="maximize",
-        storage=f"sqlite:///{study_dir}/study.db",
-        load_if_exists=True
+        storage=f"sqlite:///{db_path}"
     )
     
     study.optimize(objective, n_trials=n_trials)
@@ -120,4 +127,4 @@ if __name__ == "__main__":
     torch.manual_seed(0)
     np.random.seed(0)
     
-    tune_hyperparameters(n_trials=80) 
+    tune_hyperparameters(n_trials=20) 
