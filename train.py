@@ -36,6 +36,30 @@ def save_config_to_json(cfg: Config, writer_dir: str):
     with open(json_path, 'w') as f:
         json.dump(metadata, f, indent=4)
         
+# Add running reward stats
+class RunningMeanStd:
+    def __init__(self):
+        self.mean = 0
+        self.std = 1
+        self.count = 0
+        self.eps = 1e-4
+
+    def update(self, x):
+        batch_mean = np.mean(x)
+        batch_var = np.var(x)
+        batch_count = len(x)
+        
+        delta = batch_mean - self.mean
+        self.mean += delta * batch_count / (self.count + batch_count)
+        m_a = self.count * (self.std ** 2)
+        m_b = batch_count * batch_var
+        M2 = m_a + m_b + delta ** 2 * self.count * batch_count / (self.count + batch_count)
+        self.std = np.sqrt(M2 / (self.count + batch_count))
+        self.count += batch_count
+
+    def normalize(self, x):
+        return (x - self.mean) / (self.std + self.eps)
+
 def train(cfg: Config, return_reward: bool = False):
     print("============================================================================================")
 
@@ -101,69 +125,68 @@ def train(cfg: Config, return_reward: bool = False):
     log_running_reward = 0
     log_running_episodes = 0
 
+    reward_normalizer = RunningMeanStd()
+    
     # Start training loop
     start_time = datetime.now().replace(microsecond=0)
     while time_step <= cfg.env.max_training_timesteps:
-        state = env.reset()
+        state_tuple = env.reset()
+        observations = state_tuple[0]
         current_ep_reward = 0
+        current_ep_length = 0
 
-        # Get list of all agents from the environment
-        all_agents = list(env.agent_name_to_index.keys())  # Get all agent IDs
-        
-        # Initialize actions dictionary
-        actions = {}
-        
-        # Process each agent
-        for agent_idx in all_agents:
-            agent_state = state.get(agent_idx, {})
-            agent_index = env.agent_name_to_index[agent_idx]
+        while current_ep_length < cfg.env.max_ep_len:
+            all_agents = list(env.agent_name_to_index.keys())
+            actions = {}
             
-            # Get the agent's state array from the first agent's state dictionary
-            # since it contains all agents' states
-            first_agent_state = state[all_agents[0]]  # Use the first agent's state dict
-            if isinstance(first_agent_state.get(agent_idx), np.ndarray):
-                agent_state_array = first_agent_state[agent_idx]
-                agent_state_tensor = torch.FloatTensor(agent_state_array).to(device)
+            # Process each agent
+            for agent_idx in all_agents:
+                agent_index = env.agent_name_to_index[agent_idx]
+                agent_state = observations[agent_idx]
+                
+                agent_state_tensor = torch.FloatTensor(agent_state).to(device)
                 action = ppo_agents[agent_index].select_action(agent_state_tensor)
-            else:
-                print(f"Warning: Empty state for {agent_idx}, using zero action")
-                action = np.zeros(action_dim, dtype=np.float32)
                 
-            actions[agent_idx] = action
+                if cfg.env.has_continuous_action_space:
+                    action = action.flatten()
+                else:
+                    action = int(action)
+                    
+                actions[agent_idx] = action
 
-        # Step environment with all agents' actions
-        try:
-            step_result = env.step(actions)
+            # Step environment
+            next_observations, rewards, terminations, truncations, infos = env.step(actions)
             
-            # Handle different return formats
-            if len(step_result) == 4:
-                next_state, rewards, dones, _ = step_result
-            elif len(step_result) == 5:
-                next_state, rewards, dones, _, _ = step_result
-            else:
-                print(f"Warning: Unexpected step result format: {len(step_result)} values")
-                next_state, rewards, dones = step_result[:3]
-                
-            # Update buffers for each agent
-            for agent_idx, reward in rewards.items():
+            # Calculate average reward across all agents for this step
+            step_reward = sum(rewards.values()) / len(rewards)
+            current_ep_reward += step_reward  # Add average reward
+            
+            # Normalize rewards
+            rewards_array = np.array(list(rewards.values()))
+            reward_normalizer.update(rewards_array)
+            normalized_rewards = reward_normalizer.normalize(rewards_array)
+            
+            # Update buffers with normalized rewards
+            for agent_idx, reward in zip(rewards.keys(), normalized_rewards):
                 agent_index = env.agent_name_to_index[agent_idx]
                 agent = ppo_agents[agent_index]
                 agent.buffer.rewards.append(reward)
-                agent.buffer.is_terminals.append(dones[agent_idx])
+                agent.buffer.is_terminals.append(terminations[agent_idx] or truncations[agent_idx])
 
-            state = next_state
+            observations = next_observations
             time_step += 1
-            current_ep_reward += sum(rewards.values())
+            current_ep_length += 1
 
-            # Check if episode is done (changed from dones[0] to check first agent)
-            if dones[all_agents[0]]:  # Use the first agent's name instead of index
+            if all(terminations.values()) or all(truncations.values()):
                 break
 
-        except Exception as e:
-            print(f"Error during environment step: {e}")
-            print(f"Actions provided: {actions}")
-            raise
-
+        # Calculate average episode reward
+        current_ep_reward = current_ep_reward / current_ep_length  # Average over episode length
+        
+        # Update episode rewards list and print progress
+        print_running_reward += current_ep_reward
+        print_running_episodes += 1
+        
         # Update if its time
         if time_step % (cfg.env.max_ep_len * cfg.ppo.update_timestep) == 0:
             for agent in ppo_agents:
@@ -203,12 +226,6 @@ def train(cfg: Config, return_reward: bool = False):
             print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
             print("--------------------------------------------------------------------------------------------")
 
-        print_running_reward += current_ep_reward
-        print_running_episodes += 1
-        log_running_reward += current_ep_reward
-        log_running_episodes += 1
-        i_episode += 1
-
         # After episode ends, add these lines:
         episode_avg_reward = current_ep_reward / time_step
         writer.add_scalar('Training/episode_reward', current_ep_reward, i_episode)
@@ -217,6 +234,10 @@ def train(cfg: Config, return_reward: bool = False):
         
         if cfg.env.has_continuous_action_space:
             writer.add_scalar('Policy/action_std', ppo_agents[0].action_std, i_episode)
+
+        log_running_reward += current_ep_reward
+        log_running_episodes += 1
+        i_episode += 1
 
     final_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0
     

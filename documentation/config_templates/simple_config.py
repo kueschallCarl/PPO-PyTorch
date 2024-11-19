@@ -39,9 +39,9 @@ class PPOConfig:
     gamma: float = 0.905         # Discount factor. Higher = more emphasis on future rewards
     gae_lambda: float = 0.93    # GAE parameter. Higher = more emphasis on long-term advantages
     use_gae: bool = True        # Whether to use Generalized Advantage Estimation
-    use_value_clipping: bool = False  # Whether to use value function clipping
-    lr_actor: float = 0.00188176682200799    # Actor learning rate. Higher = faster learning but potential instability
-    lr_critic: float = 0.003559365444027006    # Critic learning rate. Higher = faster value estimation but potential instability
+    use_value_clipping: bool = True  # Whether to use value function clipping
+    lr_actor: float = 0.000188176682200799    # Actor learning rate. Higher = faster learning but potential instability
+    lr_critic: float = 0.0003559365444027006    # Critic learning rate. Higher = faster value estimation but potential instability
     update_timestep: float = 1  # Number of episodes before updating the policy (example: 4 episodes -> update every 4 * max_ep_len steps -> 4 * 1000 = 4000 steps)
     entropy_coef: float = 0.05  # Entropy coefficient. Higher = more exploration
     random_seed: int = 0        # Seed for reproducibility

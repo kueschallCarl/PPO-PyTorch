@@ -198,7 +198,8 @@ class PPO:
             )
         
         # Normalize advantages
-        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        if self.cfg.ppo.normalize_advantages:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         # Track statistics
         avg_loss = 0
@@ -210,8 +211,10 @@ class PPO:
             logprobs, state_values, dist_entropy = self.policy.evaluate(old_states, old_actions)
             state_values = torch.squeeze(state_values)
             
+            # Calculate probability ratio
             ratios = torch.exp(logprobs - old_logprobs.detach())
 
+            # Calculate surrogate losses
             surr1 = ratios * advantages
             surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * advantages
 
@@ -219,8 +222,8 @@ class PPO:
             if self.cfg.ppo.use_value_clipping:
                 value_pred_clipped = old_state_values + torch.clamp(
                     state_values - old_state_values,
-                    -self.eps_clip,
-                    self.eps_clip
+                    -self.eps_clip * old_state_values.abs(),  # Scale clipping with value magnitude
+                    self.eps_clip * old_state_values.abs()
                 )
                 value_losses = (state_values - returns).pow(2)
                 value_losses_clipped = (value_pred_clipped - returns).pow(2)
@@ -228,14 +231,29 @@ class PPO:
             else:
                 value_loss = 0.5 * (state_values - returns).pow(2).mean()
 
-            # Final losses
+            # Add value function regularization
+            value_reg_loss = 0.01 * state_values.pow(2).mean()  # L2 regularization
+            value_loss += value_reg_loss
+
+            # Calculate losses with coefficients
             policy_loss = -torch.min(surr1, surr2).mean()
             entropy_loss = -self.entropy_coef * dist_entropy.mean()
             
-            loss = policy_loss + value_loss + entropy_loss
+            # Combine losses with proper coefficients
+            loss = (
+                policy_loss * self.cfg.ppo.policy_loss_coef + 
+                value_loss * self.cfg.ppo.value_loss_coef + 
+                entropy_loss
+            )
             
+            # Gradient update with clipping
             self.optimizer.zero_grad()
             loss.backward()
+            
+            # Clip gradients separately for actor and critic
+            torch.nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.cfg.ppo.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.cfg.ppo.max_grad_norm * 0.5)  # Lower clip for critic
+            
             self.optimizer.step()
 
             # Accumulate statistics
