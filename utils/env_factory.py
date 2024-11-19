@@ -11,12 +11,13 @@ MPE_ENVS = {
     "simple_speaker_listener_v3": simple_speaker_listener_v4
 }
 
-def make_env(cfg: Config) -> Tuple[PettingZooWrapper, int, int]:
+def make_env(cfg: Config, render_mode: str = None) -> Tuple[PettingZooWrapper, int, int]:
     """
     Creates and wraps a PettingZoo MPE environment based on config settings.
     
     Args:
         cfg: Configuration object containing environment settings
+        render_mode: Rendering mode for the environment ('human', 'rgb_array', etc.)
         
     Returns:
         env: Wrapped environment
@@ -26,9 +27,13 @@ def make_env(cfg: Config) -> Tuple[PettingZooWrapper, int, int]:
     if cfg.env.env_name not in MPE_ENVS:
         raise ValueError(f"Environment {cfg.env.env_name} not found. Available environments: {list(MPE_ENVS.keys())}")
     
-    # Create raw environment
+    # Create raw environment with render mode and max cycles
     env_constructor = MPE_ENVS[cfg.env.env_name]
-    raw_env = env_constructor.parallel_env(continuous_actions=cfg.env.continuous_actions)
+    raw_env = env_constructor.parallel_env(
+        continuous_actions=cfg.env.continuous_actions,
+        render_mode=render_mode,
+        max_cycles=cfg.env.max_ep_len
+    )
     
     # Get first agent for space dimensions
     first_agent = raw_env.possible_agents[0]

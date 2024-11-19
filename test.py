@@ -9,17 +9,17 @@ from torch.utils.tensorboard import SummaryWriter
 from utils.env_factory import make_env
 
 def test(cfg: Config, test_cfg: TestConfig):
-    print("============================================================================================")
+    print("=" * 92)
     print(f"Testing started for model: {test_cfg.checkpoint_path}")
-    print("============================================================================================")
+    print("=" * 92)
 
-    # Create env using factory
-    env, state_dim, action_dim = make_env(cfg)
+    # Create env using factory with render mode
+    env, state_dim, action_dim = make_env(cfg, render_mode='human' if test_cfg.render else None)
 
     # Set random seed
     if test_cfg.random_seed:
-        print("--------------------------------------------------------------------------------------------")
-        print("setting random seed to ", test_cfg.random_seed)
+        print("-" * 92)
+        print("Setting random seed to ", test_cfg.random_seed)
         torch.manual_seed(test_cfg.random_seed)
         env.seed(test_cfg.random_seed)
         np.random.seed(test_cfg.random_seed)
@@ -29,13 +29,12 @@ def test(cfg: Config, test_cfg: TestConfig):
                            f"TEST_PPO_{cfg.env.env_name}_{test_cfg.random_seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     writer = SummaryWriter(writer_dir)
 
-    # Initialize agents with the writer
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Initialize agents without writer (since we're testing)
+    device = torch.device(cfg.device)
     ppo_agents = [
         PPO(state_dim=state_dim,
             action_dim=action_dim,
-            cfg=cfg,
-            writer=writer)
+            cfg=cfg)
         for _ in range(env.num_agents)
     ]
 
@@ -51,76 +50,60 @@ def test(cfg: Config, test_cfg: TestConfig):
     
     with torch.no_grad():  # Disable gradient computation
         for ep in range(1, test_cfg.total_test_episodes + 1):
-            state = env.reset()
+            # Update reset() call to handle tuple return
+            state_tuple = env.reset()
+            observations = state_tuple[0]  # First element contains observations
             ep_reward = 0
+            t = 0
             
-            # Get list of all agents
-            all_agents = list(env.agent_name_to_index.keys())
+            if test_cfg.render:
+                env.render()  # Render initial state
+                time.sleep(test_cfg.frame_delay)
             
-            for t in range(1, cfg.env.max_ep_len + 1):
+            while True:
                 actions = {}
                 
                 # Process each agent
-                for agent_idx in all_agents:
-                    agent_state = state.get(agent_idx, {})
+                for agent_idx, obs in observations.items():
                     agent_index = env.agent_name_to_index[agent_idx]
                     
-                    # Get the agent's state array
-                    first_agent_state = state[all_agents[0]]
+                    # Convert observation to tensor
+                    agent_state_tensor = torch.FloatTensor(obs).to(device)
                     
-                    try:
-                        if isinstance(first_agent_state, dict):
-                            agent_state_array = first_agent_state[agent_idx]
-                        else:
-                            agent_state_array = state[agent_idx]
-                            
-                        agent_state_tensor = torch.FloatTensor(agent_state_array).to(device)
-                        action = ppo_agents[agent_index].select_action(agent_state_tensor)
-                    except Exception as e:
-                        action = np.zeros(action_dim, dtype=np.float32)
-                        
+                    # Get action from policy
+                    action = ppo_agents[agent_index].select_action(agent_state_tensor)
+                    
+                    # Ensure action is in the correct format
+                    if cfg.env.has_continuous_action_space:
+                        action = action.flatten()
+                    else:
+                        action = int(action)
+                    
                     actions[agent_idx] = action
 
                 # Step environment
-                try:
-                    step_result = env.step(actions)
-                    
-                    if len(step_result) == 4:
-                        next_state, rewards, dones, _ = step_result
-                    elif len(step_result) == 5:
-                        next_state, rewards, dones, _, _ = step_result
-                    else:
-                        next_state, rewards, dones = step_result[:3]
+                observations, rewards, terminations, truncations, infos = env.step(actions)
+                
+                # Sum rewards for all agents
+                ep_reward += sum(rewards.values())
+                t += 1
 
-                    # Check if we got empty dictionaries (episode ended)
-                    if not rewards or not dones:
-                        break
+                if test_cfg.render:
+                    env.render()
+                    time.sleep(test_cfg.frame_delay)
 
-                    ep_reward += sum(rewards.values())
+                # Check if all agents are done
+                if all(terminations.values()) or all(truncations.values()):
+                    print("Episode finished")
+                    break
 
-                    # Add this line to render the environment
-                    if test_cfg.render:
-                        env.render()
-                        
-                    if test_cfg.frame_delay > 0:
-                        time.sleep(test_cfg.frame_delay)
-
-                    # Handle different done formats
-                    if isinstance(dones, dict) and all_agents[0] in dones:
-                        episode_done = dones[all_agents[0]]
-                    else:
-                        episode_done = True
-
-                    if episode_done:
-                        break
-
-                    state = next_state
-
-                except Exception as e:
+                # Optional: Limit episode length
+                if t >= cfg.env.max_ep_len:
+                    print("Max episode length reached")
                     break
 
                 # Log step-level metrics
-                writer.add_scalar('Test/step_reward', sum(rewards.values()), t + (ep-1)*cfg.env.max_ep_len)
+                writer.add_scalar('Test/step_reward', sum(rewards.values()), t + (ep - 1) * cfg.env.max_ep_len)
 
             test_running_reward += ep_reward
             print(f'Episode: {ep}/{test_cfg.total_test_episodes} \t Reward: {ep_reward:.2f}')
@@ -128,7 +111,7 @@ def test(cfg: Config, test_cfg: TestConfig):
             # Log episode-level metrics
             writer.add_scalar('Test/episode_reward', ep_reward, ep)
             writer.add_scalar('Test/episode_length', t, ep)
-            writer.add_scalar('Test/running_average_reward', test_running_reward/ep, ep)
+            writer.add_scalar('Test/running_average_reward', test_running_reward / ep, ep)
 
     env.close()
 
@@ -136,9 +119,9 @@ def test(cfg: Config, test_cfg: TestConfig):
     avg_test_reward = test_running_reward / test_cfg.total_test_episodes
     writer.add_scalar('Test/final_average_reward', avg_test_reward, 0)
     
-    print("============================================================================================")
+    print("=" * 92)
     print(f"Average test reward: {avg_test_reward:.2f}")
-    print("============================================================================================")
+    print("=" * 92)
 
     writer.close()
 
