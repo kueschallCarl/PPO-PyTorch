@@ -129,7 +129,7 @@ def train(cfg: Config, return_reward: bool = False):
             current_ep_reward += reward
 
             # Update if its time
-            if time_step % (cfg.env.max_ep_len * 4) == 0:
+            if time_step % (cfg.env.max_ep_len * cfg.ppo.update_timestep) == 0:
                 for agent in ppo_agents:
                     agent.update()
 

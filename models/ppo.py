@@ -21,7 +21,7 @@ class PPO:
         self.gamma = cfg.ppo.gamma
         self.eps_clip = cfg.ppo.eps_clip
         self.K_epochs = cfg.ppo.K_epochs
-        
+        self.entropy_coef = cfg.ppo.entropy_coef
         self.buffer = RolloutBuffer()
 
         self.policy = ActorCritic(
@@ -196,7 +196,7 @@ class PPO:
 
             # Final losses
             policy_loss = -torch.min(surr1, surr2).mean()
-            entropy_loss = -0.01 * dist_entropy.mean()
+            entropy_loss = -self.entropy_coef * dist_entropy.mean()
             
             loss = policy_loss + value_loss + entropy_loss
             
