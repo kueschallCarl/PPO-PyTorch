@@ -58,43 +58,69 @@ def test(cfg: Config, test_cfg: TestConfig):
             all_agents = list(env.agent_name_to_index.keys())
             
             for t in range(1, cfg.env.max_ep_len + 1):
-                # Initialize actions dictionary
                 actions = {}
                 
                 # Process each agent
                 for agent_idx in all_agents:
+                    agent_state = state.get(agent_idx, {})
                     agent_index = env.agent_name_to_index[agent_idx]
                     
                     # Get the agent's state array
-                    first_agent_state = state[all_agents[0]]  # Use the first agent's state dict
-                    if isinstance(first_agent_state, dict) and agent_idx in first_agent_state:
-                        agent_state_array = first_agent_state[agent_idx]
-                    else:
-                        # Direct state access if not nested
-                        agent_state_array = state[agent_idx]
+                    first_agent_state = state[all_agents[0]]
+                    
+                    try:
+                        if isinstance(first_agent_state, dict):
+                            agent_state_array = first_agent_state[agent_idx]
+                        else:
+                            agent_state_array = state[agent_idx]
+                            
+                        agent_state_tensor = torch.FloatTensor(agent_state_array).to(device)
+                        action = ppo_agents[agent_index].select_action(agent_state_tensor)
+                    except Exception as e:
+                        action = np.zeros(action_dim, dtype=np.float32)
                         
-                    agent_state_tensor = torch.FloatTensor(agent_state_array).to(device)
-                    action = ppo_agents[agent_index].select_action(agent_state_tensor)
                     actions[agent_idx] = action
 
                 # Step environment
-                next_state, rewards, dones, _ = env.step(actions)
-                ep_reward += sum(rewards.values())
+                try:
+                    step_result = env.step(actions)
+                    
+                    if len(step_result) == 4:
+                        next_state, rewards, dones, _ = step_result
+                    elif len(step_result) == 5:
+                        next_state, rewards, dones, _, _ = step_result
+                    else:
+                        next_state, rewards, dones = step_result[:3]
+
+                    # Check if we got empty dictionaries (episode ended)
+                    if not rewards or not dones:
+                        break
+
+                    ep_reward += sum(rewards.values())
+
+                    # Add this line to render the environment
+                    if test_cfg.render:
+                        env.render()
+                        
+                    if test_cfg.frame_delay > 0:
+                        time.sleep(test_cfg.frame_delay)
+
+                    # Handle different done formats
+                    if isinstance(dones, dict) and all_agents[0] in dones:
+                        episode_done = dones[all_agents[0]]
+                    else:
+                        episode_done = True
+
+                    if episode_done:
+                        break
+
+                    state = next_state
+
+                except Exception as e:
+                    break
 
                 # Log step-level metrics
                 writer.add_scalar('Test/step_reward', sum(rewards.values()), t + (ep-1)*cfg.env.max_ep_len)
-
-                if test_cfg.render and test_cfg.frame_delay > 0:
-                    time.sleep(test_cfg.frame_delay)
-
-                if dones[all_agents[0]]:  # Check first agent's done status
-                    break
-
-                state = next_state
-
-            # Clear buffers
-            for agent in ppo_agents:
-                agent.buffer.clear()
 
             test_running_reward += ep_reward
             print(f'Episode: {ep}/{test_cfg.total_test_episodes} \t Reward: {ep_reward:.2f}')
@@ -117,13 +143,6 @@ def test(cfg: Config, test_cfg: TestConfig):
     writer.close()
 
 if __name__ == '__main__':
-    # Load configs
     cfg = Config()
     test_cfg = TestConfig()
-    
-    # You can modify test config here if needed
-    # test_cfg.render = False
-    # test_cfg.total_test_episodes = 20
-    # test_cfg.frame_delay = 0.1
-    
     test(cfg, test_cfg)
