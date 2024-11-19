@@ -29,7 +29,7 @@ class ActionConfig:
     action_std: float = 0.6                # Initial action noise. Higher = more exploration
     action_std_decay_rate: float = 0.05    # How quickly to reduce exploration. Higher = faster reduction
     min_action_std: float = 0.1            # Minimum exploration noise. Higher = never fully exploits
-    action_std_decay_freq: int = int(2.5e5)  # How often to decay exploration. Lower = faster adaptation
+    action_std_decay_freq: int = int(1e4)  # How often to decay exploration. Lower = faster adaptation
 
 @dataclass
 class PPOConfig:
@@ -40,8 +40,10 @@ class PPOConfig:
     gae_lambda: float = 0.93    # GAE parameter. Higher = more emphasis on long-term advantages
     use_gae: bool = True        # Whether to use Generalized Advantage Estimation
     use_value_clipping: bool = False  # Whether to use value function clipping
-    lr_actor: float = 0.000188176682200799    # Actor learning rate. Higher = faster learning but potential instability
-    lr_critic: float = 0.0003559365444027006    # Critic learning rate. Higher = faster value estimation but potential instability
+    lr_actor: float = 0.00188176682200799    # Actor learning rate. Higher = faster learning but potential instability
+    lr_critic: float = 0.003559365444027006    # Critic learning rate. Higher = faster value estimation but potential instability
+    update_timestep: float = 1  # Number of episodes before updating the policy (example: 4 episodes -> update every 4 * max_ep_len steps -> 4 * 1000 = 4000 steps)
+    entropy_coef: float = 0.05  # Entropy coefficient. Higher = more exploration
     random_seed: int = 0        # Seed for reproducibility
 
 @dataclass
@@ -62,8 +64,8 @@ class Config:
 @dataclass
 class TestConfig:
     total_test_episodes: int = 100
-    render: bool = False
-    frame_delay: float = 0.0  # Delay between frames when rendering (0.0 for no delay)
+    render: bool = True
+    frame_delay: float = 0.3  # Delay between frames when rendering (0.0 for no delay)
     checkpoint_path: str = None  # Will be set in __post_init__
     random_seed: int = 0
 
@@ -73,5 +75,5 @@ class TestConfig:
             self.checkpoint_path = os.path.join(
                 "logs/PPO_preTrained",
                 "simple_v3",
-                f"PPO_simple_v3_0_0_gae_implementation_20241116_182524.pth"
+                f"PPO_simple_v3_0_0_gae_implementation_20241119_013027.pth"
             )
