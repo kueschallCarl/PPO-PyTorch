@@ -3,31 +3,18 @@ from datetime import datetime
 import torch
 import numpy as np
 from models.ppo import PPO
-from utils.wrappers import PettingZooWrapper
-from pettingzoo.mpe import simple_v3
 from config.config import Config, TestConfig
 import time
-from dataclasses import dataclass, asdict
 from torch.utils.tensorboard import SummaryWriter
-
+from utils.env_factory import make_env
 
 def test(cfg: Config, test_cfg: TestConfig):
     print("============================================================================================")
     print(f"Testing started for model: {test_cfg.checkpoint_path}")
     print("============================================================================================")
 
-    # Create env
-    raw_env = simple_v3.parallel_env(continuous_actions=cfg.env.continuous_actions, render_mode='human' if test_cfg.render else None)
-    first_agent = raw_env.possible_agents[0]
-    
-    # Get state and action dimensions
-    state_dim = raw_env.observation_space(first_agent).shape[0]
-    if cfg.env.has_continuous_action_space:
-        action_dim = raw_env.action_space(first_agent).shape[0]
-    else:
-        action_dim = raw_env.action_space(first_agent).n
-
-    env = PettingZooWrapper(raw_env, num_agents=len(raw_env.possible_agents))
+    # Create env using factory
+    env, state_dim, action_dim = make_env(cfg)
 
     # Set random seed
     if test_cfg.random_seed:
@@ -43,12 +30,13 @@ def test(cfg: Config, test_cfg: TestConfig):
     writer = SummaryWriter(writer_dir)
 
     # Initialize agents with the writer
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ppo_agents = [
         PPO(state_dim=state_dim,
             action_dim=action_dim,
             cfg=cfg,
             writer=writer)
-        for _ in range(len(raw_env.possible_agents))
+        for _ in range(env.num_agents)
     ]
 
     # Load pretrained weights
@@ -66,20 +54,43 @@ def test(cfg: Config, test_cfg: TestConfig):
             state = env.reset()
             ep_reward = 0
             
+            # Get list of all agents
+            all_agents = list(env.agent_name_to_index.keys())
+            
             for t in range(1, cfg.env.max_ep_len + 1):
-                current_agent = env.current_agent_idx
-                action = ppo_agents[current_agent].select_action(state)
-                state, reward, done, _ = env.step(action)
-                ep_reward += reward
+                # Initialize actions dictionary
+                actions = {}
+                
+                # Process each agent
+                for agent_idx in all_agents:
+                    agent_index = env.agent_name_to_index[agent_idx]
+                    
+                    # Get the agent's state array
+                    first_agent_state = state[all_agents[0]]  # Use the first agent's state dict
+                    if isinstance(first_agent_state, dict) and agent_idx in first_agent_state:
+                        agent_state_array = first_agent_state[agent_idx]
+                    else:
+                        # Direct state access if not nested
+                        agent_state_array = state[agent_idx]
+                        
+                    agent_state_tensor = torch.FloatTensor(agent_state_array).to(device)
+                    action = ppo_agents[agent_index].select_action(agent_state_tensor)
+                    actions[agent_idx] = action
+
+                # Step environment
+                next_state, rewards, dones, _ = env.step(actions)
+                ep_reward += sum(rewards.values())
 
                 # Log step-level metrics
-                writer.add_scalar('Test/step_reward', reward, t + (ep-1)*cfg.env.max_ep_len)
+                writer.add_scalar('Test/step_reward', sum(rewards.values()), t + (ep-1)*cfg.env.max_ep_len)
 
                 if test_cfg.render and test_cfg.frame_delay > 0:
                     time.sleep(test_cfg.frame_delay)
 
-                if done:
+                if dones[all_agents[0]]:  # Check first agent's done status
                     break
+
+                state = next_state
 
             # Clear buffers
             for agent in ppo_agents:

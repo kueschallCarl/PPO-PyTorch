@@ -5,9 +5,10 @@ import os
 @dataclass
 class EnvConfig:
     """Configuration for the environment settings"""
-    env_name: str = "simple_v3"  # Name of the environment to train in
+    """possible environmens: simple_v3, simple_adversary_v3, simple_spread_v3, simple_speaker_listener_v3"""
+    env_name: str = "simple_spread_v3"  # Name of the MPE environment to use
     max_ep_len: int = 1000       # Maximum steps per episode. Higher = longer episodes, more exploration
-    max_training_timesteps: int = int(2e5)  # Total training steps. Higher = more training time, better convergence
+    max_training_timesteps: int = int(3e6)  # Total training steps. Higher = more training time, better convergence
     has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
     continuous_actions: bool = True  # Specific flag for PettingZoo environments
 
@@ -74,6 +75,6 @@ class TestConfig:
             # Default path based on training configuration
             self.checkpoint_path = os.path.join(
                 "logs/PPO_preTrained",
-                "simple_v3",
-                f"PPO_simple_v3_0_0_gae_implementation_20241119_013027.pth"
+                "simple_spread_v3",
+                f"PPO_simple_spread_v3_0_0_gae_implementation_20241119_020145.pth"
             )

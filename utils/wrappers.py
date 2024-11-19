@@ -1,46 +1,56 @@
 import gym
 
 class PettingZooWrapper:
-    def __init__(self, env_name, num_agents):
-        self.env = env_name
+    def __init__(self, env, num_agents):
+        self.env = env
         self.num_agents = num_agents
-        self.agents = self.env.possible_agents
-        self.reset()
-        
+        self.agent_name_to_index = {agent: idx for idx, agent in enumerate(env.possible_agents)}
+        self._current_agent_idx = 0
+
     def reset(self):
-        obs = self.env.reset()
-        self.current_agent_idx = 0
-        if isinstance(obs, tuple):
-            obs = obs[0]
-        return obs[self.agents[0]]
-        
-    def step(self, action):
-        agent = self.agents[self.current_agent_idx]
-        actions = {a: action if a == agent else None for a in self.agents}
-        
-        step_result = self.env.step(actions)
-        obs, rewards, dones, truncated, infos = step_result
-        
-        if len(obs) == 0 or len(rewards) == 0 or len(dones) == 0:
-            return self.reset(), 0.0, True, {}
+        obs_tuple = self.env.reset()
+        # Convert tuple to dict if necessary
+        if isinstance(obs_tuple, tuple):
+            return dict(zip(self.env.possible_agents, obs_tuple))
+        return obs_tuple
+
+    def step(self, actions):
+        try:
+            result = self.env.step(actions)
             
-        current_obs = obs[agent]
-        current_reward = rewards[agent]
-        current_done = dones[agent]
-        current_info = infos[agent] if agent in infos else {}
-        
-        self.current_agent_idx = (self.current_agent_idx + 1) % self.num_agents
-        
-        return current_obs, current_reward, current_done, current_info
-        
-    def render(self):
-        return self.env.render()
-        
+            # Handle different return formats
+            if len(result) == 5:
+                next_state, rewards, dones, infos, _ = result
+            else:
+                next_state, rewards, dones, infos = result
+            
+            # Convert next_state tuple to dict if necessary
+            if isinstance(next_state, tuple):
+                next_state = dict(zip(self.env.possible_agents, next_state))
+            
+            # Convert dones to a single boolean if it's a dict
+            if isinstance(dones, dict):
+                done = all(dones.values())
+            else:
+                done = dones
+            
+            return next_state, rewards, dones, infos
+            
+        except Exception as e:
+            print(f"Error in wrapper step: {e}")
+            print(f"Actions provided: {actions}")
+            print(f"Step result: {result}")
+            raise
+
     def close(self):
         self.env.close()
 
+    @property
+    def current_agent_idx(self):
+        current_agent = self.env.agent_selection
+        return self.agent_name_to_index[current_agent]
+
     def seed(self, seed):
-        if hasattr(self.env, 'seed'):
-            self.env.seed(seed)
-        
+        self.env.seed(seed)
+
     # ... rest of PettingZooWrapper class methods ... 

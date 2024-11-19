@@ -77,30 +77,64 @@ class PPO:
             print("WARNING : Calling PPO::decay_action_std() on discrete action space policy")
 
     def select_action(self, state):
+        if not isinstance(state, torch.Tensor):
+            state = torch.FloatTensor(state).to(self.device)
+        
         if self.has_continuous_action_space:
             with torch.no_grad():
-                state = torch.FloatTensor(state).to(device)
+                # Convert state to tensor, handling both dict and array inputs
+                if isinstance(state, dict):
+                    # We're getting the state for a single agent, so just use that
+                    state = state
+                elif isinstance(state, np.ndarray):
+                    state = torch.FloatTensor(state).to(device)
+                
+                # Add batch dimension if not present
+                if len(state.shape) == 1:
+                    state = state.unsqueeze(0)
+                
                 action, action_logprob, state_val = self.policy_old.act(state)
 
-            self.buffer.states.append(state)
-            self.buffer.actions.append(action)
-            self.buffer.logprobs.append(action_logprob)
-            self.buffer.state_values.append(state_val)
+                # Add checks for NaN values
+                if torch.isnan(action).any():
+                    print(f"Warning: NaN detected in action: {action}")
+                    action = torch.nan_to_num(action, 0.5)
 
-            #return action.detach().cpu().numpy().flatten()
-            #clipping manually to ensure action is within [0, 1], otherwise pettingzoo does it and throws warnings
-            return np.clip(action.detach().cpu().numpy().flatten(), 0.0, 1.0)
+                self.buffer.states.append(state)
+                self.buffer.actions.append(action)
+                self.buffer.logprobs.append(action_logprob)
+                self.buffer.state_values.append(state_val)
+
+                action_np = action.detach().cpu().numpy().flatten()
+                if np.isnan(action_np).any():
+                    action_np = np.nan_to_num(action_np, 0.5)
+                return np.clip(action_np, 0.0, 1.0)
         else:
             with torch.no_grad():
-                state = torch.FloatTensor(state).to(device)
+                # Handle discrete action case similarly
+                if isinstance(state, dict):
+                    # Convert nested dict to flat array
+                    state_values = []
+                    for key, value in state.items():
+                        if isinstance(value, dict):
+                            # If value is a dict, flatten its values
+                            state_values.extend([v for v in value.values()])
+                        elif isinstance(value, (list, np.ndarray)):
+                            state_values.extend(value)
+                        else:
+                            state_values.append(value)
+                    state = torch.FloatTensor(state_values).to(device)
+                else:
+                    state = torch.FloatTensor(state).to(device)
+                
                 action, action_logprob, state_val = self.policy_old.act(state)
-            
-            self.buffer.states.append(state)
-            self.buffer.actions.append(action)
-            self.buffer.logprobs.append(action_logprob)
-            self.buffer.state_values.append(state_val)
+                
+                self.buffer.states.append(state)
+                self.buffer.actions.append(action)
+                self.buffer.logprobs.append(action_logprob)
+                self.buffer.state_values.append(state_val)
 
-            return action.item()
+                return action.item()
 
     def compute_gae(self, rewards, values, dones, next_value=0):
         """
@@ -256,5 +290,9 @@ class PPO:
         torch.save(self.policy_old.state_dict(), checkpoint_path)
    
     def load(self, checkpoint_path):
-        self.policy_old.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
-        self.policy.load_state_dict(torch.load(checkpoint_path, map_location=lambda storage, loc: storage))
+        self.policy_old.load_state_dict(
+            torch.load(checkpoint_path, map_location=lambda storage, loc: storage, weights_only=True)
+        )
+        self.policy.load_state_dict(
+            torch.load(checkpoint_path, map_location=lambda storage, loc: storage, weights_only=True)
+        )
