@@ -29,7 +29,7 @@ class ActionConfig:
     action_std: float = 0.6                # Initial action noise. Higher = more exploration
     action_std_decay_rate: float = 0.05    # How quickly to reduce exploration. Higher = faster reduction
     min_action_std: float = 0.1            # Minimum exploration noise. Higher = never fully exploits
-    action_std_decay_freq: int = int(2.5e5)  # How often to decay exploration. Lower = faster adaptation
+    action_std_decay_freq: int = int(5e4)  # How often to decay exploration. Lower = faster adaptation
 
 @dataclass
 class PPOConfig:
