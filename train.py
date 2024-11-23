@@ -315,21 +315,21 @@ if __name__ == '__main__':
     pretrained_model = "runs/PPO_simple_v3_None_0_fixing_IPPO_20241123_224202/model.pth"
     
     # Verify file exists before starting
-    if not os.path.exists(pretrained_model):
-        print(f"Error: Pretrained model not found at {pretrained_model}")
-        # List available models
-        model_dir = "logs/PPO_preTrained/simple_v3/"
-        if os.path.exists(model_dir):
-            print("\nAvailable models:")
-            for file in os.listdir(model_dir):
-                if file.endswith(".pth"):
-                    print(f"- {file}")
-    else:
-        # Start fine-tuning with rendering enabled
-        train(
-            cfg, 
-            pretrained_path=pretrained_model,
-            render=False
+    if pretrained_model:
+        if not os.path.exists(pretrained_model):
+            print(f"Error: Pretrained model not found at {pretrained_model}")
+            # List available models
+            model_dir = "logs/PPO_preTrained/simple_v3/"
+            if os.path.exists(model_dir):
+                print("\nAvailable models:")
+                for file in os.listdir(model_dir):
+                    if file.endswith(".pth"):
+                        print(f"- {file}")
+    # Start fine-tuning with rendering enabled
+    train(
+        cfg, 
+        pretrained_path=None,
+        render=False
         )
     
     

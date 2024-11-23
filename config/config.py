@@ -5,9 +5,9 @@ import os
 @dataclass
 class EnvConfig:
     """Configuration for the environment settings"""
-    env_name: str = "simple_v3"  # Name of the environment to train in
+    env_name: str = "simple_spread_v3"  # Name of the environment to train in
     max_ep_len: int = 1000       # Maximum steps per episode. Higher = longer episodes, more exploration
-    max_training_timesteps: int = int(5e4)  # Total training steps. Higher = more training time, better convergence
+    max_training_timesteps: int = int(1e5)  # Total training steps. Higher = more training time, better convergence
     has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
     continuous_actions: bool = True  # Specific flag for PettingZoo environments
 
@@ -17,7 +17,7 @@ class LogConfig:
     # Higher frequencies = more detailed tracking but slower training
     print_freq: Optional[int] = None      # How often to print training info
     log_freq: Optional[int] = None        # How often to log metrics
-    save_model_freq: int = int(2.5e4)       # How often to save model checkpoints. Higher = fewer saves
+    save_model_freq: int = int(5e4)       # How often to save model checkpoints. Higher = fewer saves
     log_dir: str = "logs/PPO_logs"        # Directory for storing logs
     model_dir: str = "logs/PPO_preTrained"  # Directory for saving models
     tensorboard_dir: str = "runs"         # Directory for tensorboard logs
@@ -80,6 +80,6 @@ class TestConfig:
             # Default path based on training configuration
             self.checkpoint_path = os.path.join(
                 "logs/PPO_preTrained",
-                "simple_v3",
-                f"PPO_simple_v3_fixing_IPPO_None_0_20241123_224346.pth"
+                "simple_spread_v3",
+                f"PPO_simple_spread_v3_fixing_IPPO_None_0_20241123_230158.pth"
             )

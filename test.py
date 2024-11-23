@@ -34,7 +34,7 @@ def test(cfg: Config, test_cfg: TestConfig):
     ppo_agents = [
         PPO(state_dim=state_dim,
             action_dim=action_dim,
-            cfg=cfg)
+            cfg=cfg, writer=writer)
         for _ in range(env.num_agents)
     ]
 
