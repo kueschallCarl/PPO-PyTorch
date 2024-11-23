@@ -91,14 +91,15 @@ def train(
         
     run_num = len(next(os.walk(cfg.log.tensorboard_dir))[2])
 
-    # Create new checkpoint path for this run
-    new_checkpoint_path = os.path.join(model_dir, 
-                                 f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
+    
 
     # Create writer directory path
     writer_dir = os.path.join(cfg.log.tensorboard_dir, 
                            f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    
+    # Create new checkpoint paths for both locations
+    checkpoint_filename = f"PPO_{cfg.env.env_name}_{cfg.log.run_name}_{cfg.ppo.random_seed}_{run_num}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth"
+    model_dir_checkpoint = os.path.join(model_dir, checkpoint_filename)
+    writer_dir_checkpoint = os.path.join(writer_dir, "model.pth")
     # Create writer
     writer = SummaryWriter(writer_dir)
     
@@ -266,10 +267,13 @@ def train(
         # Save model if its time
         if time_step % cfg.log.save_model_freq == 0:
             print("--------------------------------------------------------------------------------------------")
-            print(f"saving model at : {new_checkpoint_path}")
+            print("saving model checkpoints...")
             for agent in ppo_agents:
-                agent.save(new_checkpoint_path)
-            print("model saved")
+                agent.save(model_dir_checkpoint)
+                agent.save(writer_dir_checkpoint)
+            print("models saved at:")
+            print(f"- {model_dir_checkpoint}")
+            print(f"- {writer_dir_checkpoint}")
             print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
             print("--------------------------------------------------------------------------------------------")
 
@@ -295,8 +299,11 @@ def train(
     # Save final model
     print("Saving final model...")
     for agent in ppo_agents:
-        agent.save(new_checkpoint_path)
-    print(f"Final model saved at: {new_checkpoint_path}")
+        agent.save(model_dir_checkpoint)
+        agent.save(writer_dir_checkpoint)
+    print("Final model saved at:")
+    print(f"- {model_dir_checkpoint}")
+    print(f"- {writer_dir_checkpoint}")
 
     if return_reward:
         return final_avg_reward
@@ -305,7 +312,7 @@ if __name__ == '__main__':
     cfg = Config()
     
     # Example of fine-tuning a pretrained model
-    pretrained_model = "logs/PPO_preTrained/simple_v3/PPO_simple_v3_0_0_fixing_IPPO_20241123_212803.pth"
+    pretrained_model = "runs/PPO_simple_v3_None_0_fixing_IPPO_20241123_224202/model.pth"
     
     # Verify file exists before starting
     if not os.path.exists(pretrained_model):
@@ -321,7 +328,7 @@ if __name__ == '__main__':
         # Start fine-tuning with rendering enabled
         train(
             cfg, 
-            pretrained_path=None,
+            pretrained_path=pretrained_model,
             render=False
         )
     

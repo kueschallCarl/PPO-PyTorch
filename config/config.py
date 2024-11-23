@@ -81,5 +81,5 @@ class TestConfig:
             self.checkpoint_path = os.path.join(
                 "logs/PPO_preTrained",
                 "simple_v3",
-                f"PPO_simple_v3_None_0_fixing_IPPO_20241123_222151.pth"
+                f"PPO_simple_v3_fixing_IPPO_None_0_20241123_224346.pth"
             )
