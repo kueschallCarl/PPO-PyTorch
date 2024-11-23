@@ -118,31 +118,20 @@ def train(
 
     # Handle model loading for different scenarios
     if pretrained_path:
-        print(f"Fine-tuning from pretrained model: {pretrained_path}")
-        # Verify file exists
-        if not os.path.exists(pretrained_path):
-            raise FileNotFoundError(f"Pretrained model not found at: {pretrained_path}")
-            
-        # Load pretrained model
-        for agent in ppo_agents:
-            agent.load(pretrained_path)
+        print(f"Fine-tuning from pretrained models in: {pretrained_path}")
+        # Load pretrained models
+        load_checkpoint(ppo_agents, pretrained_path)
             
         # Modify learning rates for fine-tuning
         for agent in ppo_agents:
             for param_group in agent.optimizer.param_groups:
                 param_group['lr'] *= 0.1  # Reduce learning rate for fine-tuning
                 
-        print("Loaded pretrained model and adjusted learning rates for fine-tuning")
+        print("Loaded pretrained models and adjusted learning rates for fine-tuning")
         
     elif checkpoint_path:
-        print(f"Resuming training from checkpoint: {checkpoint_path}")
-        # Verify file exists
-        if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
-            
-        # Load checkpoint
-        for agent in ppo_agents:
-            agent.load(checkpoint_path)
+        print(f"Resuming training from checkpoint directory: {checkpoint_path}")
+        load_checkpoint(ppo_agents, checkpoint_path)
         print("Resumed from checkpoint successfully")
 
     # Set initial random seed if specified
@@ -268,9 +257,7 @@ def train(
         if time_step % cfg.log.save_model_freq == 0:
             print("--------------------------------------------------------------------------------------------")
             print("saving model checkpoints...")
-            for agent in ppo_agents:
-                agent.save(model_dir_checkpoint)
-                agent.save(writer_dir_checkpoint)
+            save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
             print("models saved at:")
             print(f"- {model_dir_checkpoint}")
             print(f"- {writer_dir_checkpoint}")
@@ -298,9 +285,7 @@ def train(
     
     # Save final model
     print("Saving final model...")
-    for agent in ppo_agents:
-        agent.save(model_dir_checkpoint)
-        agent.save(writer_dir_checkpoint)
+    save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
     print("Final model saved at:")
     print(f"- {model_dir_checkpoint}")
     print(f"- {writer_dir_checkpoint}")
@@ -308,12 +293,38 @@ def train(
     if return_reward:
         return final_avg_reward
 
+def save_checkpoint(agents, model_dir_checkpoint, writer_dir_checkpoint):
+    """
+    Save agent checkpoints in both locations:
+    - model_dir: Full path with timestamp etc.
+    - writer_dir: Simple 'model_agentX.pth' in the run directory
+    """
+    # Save in model_dir (archive)
+    for agent_idx, agent in enumerate(agents):
+        model_path = model_dir_checkpoint.replace('.pth', f'_agent{agent_idx}.pth')
+        agent.save(model_path)
+    
+    # Save in writer_dir (run directory)
+    for agent_idx, agent in enumerate(agents):
+        writer_path = os.path.join(os.path.dirname(writer_dir_checkpoint), f'model_agent{agent_idx}.pth')
+        agent.save(writer_path)
+
+def load_checkpoint(agents, checkpoint_dir):
+    """
+    Load agent checkpoints from a run directory
+    checkpoint_dir: path to the run directory containing model_agent{X}.pth files
+    """
+    for agent_idx, agent in enumerate(agents):
+        agent_checkpoint = os.path.join(checkpoint_dir, f'model_agent{agent_idx}.pth')
+        if not os.path.exists(agent_checkpoint):
+            raise FileNotFoundError(f"Model for agent {agent_idx} not found at: {agent_checkpoint}")
+        agent.load(agent_checkpoint)
+
 if __name__ == '__main__':
     cfg = Config()
     
     # Example of fine-tuning a pretrained model
-    pretrained_model = "runs/PPO_simple_v3_None_0_fixing_IPPO_20241123_224202/model.pth"
-    
+    pretrained_model = "runs/PPO_simple_v3_None_0_fixing_IPPO_20241123_224202"  # Directory path, not file path    
     # Verify file exists before starting
     if pretrained_model:
         if not os.path.exists(pretrained_model):

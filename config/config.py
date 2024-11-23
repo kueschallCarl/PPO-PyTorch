@@ -78,8 +78,4 @@ class TestConfig:
     def __post_init__(self):
         if self.checkpoint_path is None:
             # Default path based on training configuration
-            self.checkpoint_path = os.path.join(
-                "logs/PPO_preTrained",
-                "simple_spread_v3",
-                f"PPO_simple_spread_v3_fixing_IPPO_None_0_20241123_230158.pth"
-            )
+            self.checkpoint_path = "runs/PPO_simple_spread_v3_None_0_fixing_IPPO_20241123_232800"

@@ -29,7 +29,7 @@ def test(cfg: Config, test_cfg: TestConfig):
                            f"TEST_PPO_{cfg.env.env_name}_{test_cfg.random_seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     writer = SummaryWriter(writer_dir)
 
-    # Initialize agents without writer (since we're testing)
+    # Initialize agents
     device = torch.device(cfg.device)
     ppo_agents = [
         PPO(state_dim=state_dim,
@@ -38,10 +38,18 @@ def test(cfg: Config, test_cfg: TestConfig):
         for _ in range(env.num_agents)
     ]
 
-    # Load pretrained weights
-    print("Loading pretrained model from:", test_cfg.checkpoint_path)
-    for agent in ppo_agents:
-        agent.load(test_cfg.checkpoint_path)
+    # Load pretrained weights for each agent
+    print("Loading pretrained models from directory:", test_cfg.checkpoint_path)
+    checkpoint_dir = test_cfg.checkpoint_path  # This should now be the run directory path
+    for agent_idx, agent in enumerate(ppo_agents):
+        # Construct agent-specific model path
+        agent_checkpoint = os.path.join(checkpoint_dir, f'model_agent{agent_idx}.pth')
+        
+        if not os.path.exists(agent_checkpoint):
+            raise FileNotFoundError(f"Model for agent {agent_idx} not found at: {agent_checkpoint}")
+            
+        print(f"Loading agent {agent_idx} model from: {agent_checkpoint}")
+        agent.load(agent_checkpoint)
         agent.policy_old.eval()  # Set policy network to evaluation mode
         agent.policy.eval()      # Set policy network to evaluation mode
 
