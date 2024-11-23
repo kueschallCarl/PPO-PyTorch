@@ -2,6 +2,7 @@ from typing import Tuple
 from pettingzoo.mpe import simple_v3, simple_adversary_v3, simple_spread_v3, simple_speaker_listener_v4
 from utils.wrappers import PettingZooWrapper
 from config.config import Config
+import numpy as np
 
 # Dictionary mapping environment names to their constructor functions
 MPE_ENVS = {
@@ -27,7 +28,7 @@ def make_env(cfg: Config, render_mode: str = None) -> Tuple[PettingZooWrapper, i
     if cfg.env.env_name not in MPE_ENVS:
         raise ValueError(f"Environment {cfg.env.env_name} not found. Available environments: {list(MPE_ENVS.keys())}")
     
-    # Create raw environment with render mode and max cycles
+    # Create raw environment
     env_constructor = MPE_ENVS[cfg.env.env_name]
     raw_env = env_constructor.parallel_env(
         continuous_actions=cfg.env.continuous_actions,

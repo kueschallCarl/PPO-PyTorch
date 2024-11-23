@@ -71,8 +71,7 @@ def test(cfg: Config, test_cfg: TestConfig):
                     agent_state_tensor = torch.FloatTensor(obs).to(device)
                     
                     # Get action from policy
-                    action = ppo_agents[agent_index].select_action(agent_state_tensor)
-                    
+                    action = ppo_agents[agent_index].select_action(agent_state_tensor, deterministic=True)                    
                     # Ensure action is in the correct format
                     if cfg.env.has_continuous_action_space:
                         action = action.flatten()

@@ -76,7 +76,7 @@ class PPO:
         else:
             print("WARNING : Calling PPO::decay_action_std() on discrete action space policy")
 
-    def select_action(self, state):
+    def select_action(self, state, deterministic=False):
         if not isinstance(state, torch.Tensor):
             state = torch.FloatTensor(state).to(self.device)
         
@@ -93,17 +93,27 @@ class PPO:
                 if len(state.shape) == 1:
                     state = state.unsqueeze(0)
                 
-                action, action_logprob, state_val = self.policy_old.act(state)
+                if deterministic:
+                    # Use mean action directly without sampling
+                    action_mean = self.policy_old.actor(state)
+                    action = action_mean
+                    # We still need state value for logging
+                    state_val = self.policy_old.critic(state)
+                else:
+                    # Stochastic action selection (training mode)
+                    action, action_logprob, state_val = self.policy_old.act(state)
 
                 # Add checks for NaN values
                 if torch.isnan(action).any():
                     print(f"Warning: NaN detected in action: {action}")
                     action = torch.nan_to_num(action, 0.5)
 
-                self.buffer.states.append(state)
-                self.buffer.actions.append(action)
-                self.buffer.logprobs.append(action_logprob)
-                self.buffer.state_values.append(state_val)
+                # Only append to buffer during training
+                if not deterministic:
+                    self.buffer.states.append(state)
+                    self.buffer.actions.append(action)
+                    self.buffer.logprobs.append(action_logprob)
+                    self.buffer.state_values.append(state_val)
 
                 action_np = action.detach().cpu().numpy().flatten()
                 if np.isnan(action_np).any():
@@ -127,12 +137,21 @@ class PPO:
                 else:
                     state = torch.FloatTensor(state).to(device)
                 
-                action, action_logprob, state_val = self.policy_old.act(state)
+                if deterministic:
+                    # Use argmax for deterministic action selection
+                    action_probs = self.policy_old.actor(state)
+                    action = torch.argmax(action_probs)
+                    state_val = self.policy_old.critic(state)
+                else:
+                    # Stochastic action selection (training mode)
+                    action, action_logprob, state_val = self.policy_old.act(state)
                 
-                self.buffer.states.append(state)
-                self.buffer.actions.append(action)
-                self.buffer.logprobs.append(action_logprob)
-                self.buffer.state_values.append(state_val)
+                # Only append to buffer during training
+                if not deterministic:
+                    self.buffer.states.append(state)
+                    self.buffer.actions.append(action)
+                    self.buffer.logprobs.append(action_logprob)
+                    self.buffer.state_values.append(state_val)
 
                 return action.item()
 

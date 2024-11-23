@@ -7,7 +7,7 @@ class EnvConfig:
     """Configuration for the environment settings"""
     env_name: str = "simple_v3"  # Name of the environment to train in
     max_ep_len: int = 1000       # Maximum steps per episode. Higher = longer episodes, more exploration
-    max_training_timesteps: int = int(2e5)  # Total training steps. Higher = more training time, better convergence
+    max_training_timesteps: int = int(5e4)  # Total training steps. Higher = more training time, better convergence
     has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
     continuous_actions: bool = True  # Specific flag for PettingZoo environments
 
@@ -17,11 +17,11 @@ class LogConfig:
     # Higher frequencies = more detailed tracking but slower training
     print_freq: Optional[int] = None      # How often to print training info
     log_freq: Optional[int] = None        # How often to log metrics
-    save_model_freq: int = int(1e5)       # How often to save model checkpoints. Higher = fewer saves
+    save_model_freq: int = int(2.5e4)       # How often to save model checkpoints. Higher = fewer saves
     log_dir: str = "logs/PPO_logs"        # Directory for storing logs
     model_dir: str = "logs/PPO_preTrained"  # Directory for saving models
     tensorboard_dir: str = "runs"         # Directory for tensorboard logs
-    run_name: str = "gae_implementation"   # Identifier for this training run
+    run_name: str = "fixing_IPPO"   # Identifier for this training run
 
 @dataclass
 class ActionConfig:
@@ -44,7 +44,7 @@ class PPOConfig:
     lr_critic: float = 0.0003   # Critic learning rate. Higher = faster value estimation but potential instability
     update_timestep: float = 1  # Number of episodes before updating the policy (example: 4 episodes -> update every 4 * max_ep_len steps -> 4 * 1000 = 4000 steps)
     entropy_coef: float = 0.01  # Entropy coefficient. Higher = more exploration
-    random_seed: int = 0        # Seed for reproducibility
+    random_seed: Optional[int] = None  # Changed from 0 to None to enable random initialization
     max_grad_norm = 0.5
     policy_loss_coef = 1.0
     value_loss_coef = 0.5
@@ -71,7 +71,7 @@ class Config:
 class TestConfig:
     total_test_episodes: int = 100
     render: bool = True
-    frame_delay: float = 0.3  # Delay between frames when rendering (0.0 for no delay)
+    frame_delay: float = 0.001  # Delay between frames when rendering (0.0 for no delay)
     checkpoint_path: str = None  # Will be set in __post_init__
     random_seed: int = 0
 
@@ -81,5 +81,5 @@ class TestConfig:
             self.checkpoint_path = os.path.join(
                 "logs/PPO_preTrained",
                 "simple_v3",
-                f"PPO_simple_v3_0_0_gae_implementation_20241119_013027.pth"
+                f"PPO_simple_v3_None_0_fixing_IPPO_20241123_222151.pth"
             )

@@ -1,0 +1,1 @@
+The "freezing" behavior you observe is typical when a policy hasn't learned robust behavior and its deterministic actions get stuck in a local minimum. The stochastic policy might appear better because the random exploration helps it avoid getting stuck.

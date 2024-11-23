@@ -8,18 +8,14 @@ class PettingZooWrapper:
         self.num_agents = num_agents
         self.agent_name_to_index = {agent: idx for idx, agent in enumerate(env.possible_agents)}
         
-    def reset(self):
-        """Reset the environment"""
-        return self.env.reset()
+    def reset(self, seed=None):
+        """Reset the environment with optional seed"""
+        return self.env.reset(seed=seed)
     
     def step(self, actions):
         """Take a step in the environment"""
         return self.env.step(actions)
     
-    def seed(self, seed):
-        """Set the seed for the environment"""
-        self.env.seed(seed)
-        
     def close(self):
         """Close the environment"""
         self.env.close()

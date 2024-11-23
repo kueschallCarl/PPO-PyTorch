@@ -60,11 +60,27 @@ class RunningMeanStd:
     def normalize(self, x):
         return (x - self.mean) / (self.std + self.eps)
 
-def train(cfg: Config, return_reward: bool = False):
+def train(
+    cfg: Config, 
+    return_reward: bool = False, 
+    render: bool = False,
+    pretrained_path: str = None,  # Path for fine-tuning
+    checkpoint_path: str = None,  # Path for resuming training
+):
+    """
+    Train PPO agents, with options for fresh training, resuming training, or fine-tuning.
+    
+    Args:
+        cfg: Configuration object
+        return_reward: Whether to return final average reward
+        render: Whether to render environment during training
+        pretrained_path: Path to pretrained model for fine-tuning (will modify learning rates)
+        checkpoint_path: Path to checkpoint for resuming training (keeps original settings)
+    """
     print("============================================================================================")
 
-    # Create env using factory
-    env, state_dim, action_dim = make_env(cfg)
+    # Create env using factory with optional rendering
+    env, state_dim, action_dim = make_env(cfg, render_mode='human' if render else None)
     
     # Set up model saving
     if not os.path.exists(cfg.log.model_dir): 
@@ -75,17 +91,14 @@ def train(cfg: Config, return_reward: bool = False):
         
     run_num = len(next(os.walk(cfg.log.tensorboard_dir))[2])
 
-    checkpoint_path = os.path.join(model_dir, 
+    # Create new checkpoint path for this run
+    new_checkpoint_path = os.path.join(model_dir, 
                                  f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth")
 
     # Create writer directory path
     writer_dir = os.path.join(cfg.log.tensorboard_dir, 
                            f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     
-    #set loggin dir to writer_dir
-    log_dir = writer_dir
-    log_f_name = os.path.join(log_dir, f"PPO_{cfg.env.env_name}_{cfg.ppo.random_seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
-
     # Create writer
     writer = SummaryWriter(writer_dir)
     
@@ -102,18 +115,48 @@ def train(cfg: Config, return_reward: bool = False):
         for _ in range(env.num_agents)
     ]
 
-    # Set random seed
-    if cfg.ppo.random_seed:
-        print("--------------------------------------------------------------------------------------------")
-        print("setting random seed to ", cfg.ppo.random_seed)
-        torch.manual_seed(cfg.ppo.random_seed)
-        env.seed(cfg.ppo.random_seed)
-        np.random.seed(cfg.ppo.random_seed)
+    # Handle model loading for different scenarios
+    if pretrained_path:
+        print(f"Fine-tuning from pretrained model: {pretrained_path}")
+        # Verify file exists
+        if not os.path.exists(pretrained_path):
+            raise FileNotFoundError(f"Pretrained model not found at: {pretrained_path}")
+            
+        # Load pretrained model
+        for agent in ppo_agents:
+            agent.load(pretrained_path)
+            
+        # Modify learning rates for fine-tuning
+        for agent in ppo_agents:
+            for param_group in agent.optimizer.param_groups:
+                param_group['lr'] *= 0.1  # Reduce learning rate for fine-tuning
+                
+        print("Loaded pretrained model and adjusted learning rates for fine-tuning")
+        
+    elif checkpoint_path:
+        print(f"Resuming training from checkpoint: {checkpoint_path}")
+        # Verify file exists
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
+            
+        # Load checkpoint
+        for agent in ppo_agents:
+            agent.load(checkpoint_path)
+        print("Resumed from checkpoint successfully")
 
+    # Set initial random seed if specified
+    if cfg.ppo.random_seed is not None:
+        print("--------------------------------------------------------------------------------------------")
+        print("setting initial random seed to ", cfg.ppo.random_seed)
+        torch.manual_seed(cfg.ppo.random_seed)
+        np.random.seed(cfg.ppo.random_seed)
+    
     # Logging
     print("Started training at (GMT) : ", datetime.now().replace(microsecond=0))
     print("============================================================================================")
     
+    # Create log file path
+    log_f_name = os.path.join(writer_dir, 'training_log.csv')
     log_f = open(log_f_name, "w+")
     log_f.write('episode,timestep,reward\n')
 
@@ -130,11 +173,15 @@ def train(cfg: Config, return_reward: bool = False):
     # Start training loop
     start_time = datetime.now().replace(microsecond=0)
     while time_step <= cfg.env.max_training_timesteps:
-        state_tuple = env.reset()
+        # Generate new random seed for each episode
+        episode_seed = np.random.randint(0, 10000)
+        
+        # Reset environment with new seed
+        state_tuple = env.reset(seed=episode_seed)  # Pass seed directly to reset
         observations = state_tuple[0]
         current_ep_reward = 0
         current_ep_length = 0
-
+        
         while current_ep_length < cfg.env.max_ep_len:
             all_agents = list(env.agent_name_to_index.keys())
             actions = {}
@@ -219,9 +266,9 @@ def train(cfg: Config, return_reward: bool = False):
         # Save model if its time
         if time_step % cfg.log.save_model_freq == 0:
             print("--------------------------------------------------------------------------------------------")
-            print("saving model at : " + checkpoint_path)
+            print(f"saving model at : {new_checkpoint_path}")
             for agent in ppo_agents:
-                agent.save(checkpoint_path)
+                agent.save(new_checkpoint_path)
             print("model saved")
             print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
             print("--------------------------------------------------------------------------------------------")
@@ -245,12 +292,38 @@ def train(cfg: Config, return_reward: bool = False):
     env.close()
     writer.close()
     
+    # Save final model
+    print("Saving final model...")
+    for agent in ppo_agents:
+        agent.save(new_checkpoint_path)
+    print(f"Final model saved at: {new_checkpoint_path}")
+
     if return_reward:
         return final_avg_reward
 
 if __name__ == '__main__':
     cfg = Config()
-    train(cfg)
+    
+    # Example of fine-tuning a pretrained model
+    pretrained_model = "logs/PPO_preTrained/simple_v3/PPO_simple_v3_0_0_fixing_IPPO_20241123_212803.pth"
+    
+    # Verify file exists before starting
+    if not os.path.exists(pretrained_model):
+        print(f"Error: Pretrained model not found at {pretrained_model}")
+        # List available models
+        model_dir = "logs/PPO_preTrained/simple_v3/"
+        if os.path.exists(model_dir):
+            print("\nAvailable models:")
+            for file in os.listdir(model_dir):
+                if file.endswith(".pth"):
+                    print(f"- {file}")
+    else:
+        # Start fine-tuning with rendering enabled
+        train(
+            cfg, 
+            pretrained_path=None,
+            render=False
+        )
     
     
     
