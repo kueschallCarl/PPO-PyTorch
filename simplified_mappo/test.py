@@ -88,6 +88,10 @@ def test_model(train_cfg: Config, test_cfg: TestConfig):
         episode_reward = 0
         
         for step in range(train_cfg.env.episode_length):
+            # Store previous positions for interpolation
+            prev_positions = np.array([agent.state.p_pos.copy() for agent in world.agents])
+            prev_velocities = np.array([agent.state.p_vel.copy() for agent in world.agents])
+            
             if train_cfg.algorithm == "mappo":
                 # Get observations for all agents
                 obs = torch.FloatTensor(np.array([
@@ -96,7 +100,7 @@ def test_model(train_cfg: Config, test_cfg: TestConfig):
                 
                 # Get actions from policy
                 with torch.no_grad():
-                    actions, _ = policy.get_actions(obs)
+                    actions, _ = policy.get_actions(obs, deterministic=test_cfg.deterministic)
                 actions = actions.cpu().numpy()
                 
                 # Set actions for each agent
@@ -114,13 +118,35 @@ def test_model(train_cfg: Config, test_cfg: TestConfig):
             # Step the environment
             world.step()
             
+            # Get new positions
+            new_positions = np.array([agent.state.p_pos.copy() for agent in world.agents])
+            new_velocities = np.array([agent.state.p_vel.copy() for agent in world.agents])
+            
             # Calculate rewards
             rewards = [scenario.reward(agent, world) for agent in world.agents]
             episode_reward += sum(rewards) / len(rewards)
             
             if test_cfg.render:
-                render_env(world)
-                time.sleep(test_cfg.delay)
+                # Interpolate between states for smoother visualization
+                n_interp = 10  # Number of interpolation steps
+                for i in range(n_interp):
+                    t = i / n_interp
+                    # Linearly interpolate positions and velocities
+                    interp_positions = prev_positions * (1 - t) + new_positions * t
+                    interp_velocities = prev_velocities * (1 - t) + new_velocities * t
+                    
+                    # Temporarily update agent states for rendering
+                    for agent_idx, agent in enumerate(world.agents):
+                        agent.state.p_pos = interp_positions[agent_idx]
+                        agent.state.p_vel = interp_velocities[agent_idx]
+                    
+                    render_env(world)
+                    time.sleep(test_cfg.delay / n_interp)
+                    
+                # Restore final positions and velocities
+                for agent_idx, agent in enumerate(world.agents):
+                    agent.state.p_pos = new_positions[agent_idx]
+                    agent.state.p_vel = new_velocities[agent_idx]
                 
         avg_reward = episode_reward / train_cfg.env.episode_length
         episode_rewards.append(avg_reward)

@@ -50,13 +50,14 @@ class World(object):
         self.dim_p = 2
         self.collaborative = False
         self.world_length = 25
+        self.dt = 0.1  # Add time delta
+        self.force_scale = 1.0  # Add force scaling
         
     def step(self):
-        # update agents
         for agent in self.agents:
             # physical action
-            agent.state.p_vel = agent.action.u
-            agent.state.p_pos += agent.state.p_vel
+            agent.state.p_vel = agent.action.u * self.force_scale
+            agent.state.p_pos += agent.state.p_vel * self.dt
 
     def get_obs(self, agent):
         # get positions of all entities in this agent's reference frame
