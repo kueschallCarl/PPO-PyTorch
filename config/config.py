@@ -5,9 +5,9 @@ import os
 @dataclass
 class EnvConfig:
     """Configuration for the environment settings"""
-    env_name: str = "simple_spread_v3"  # Name of the environment to train in
+    env_name: str = "simple_v3"  # Name of the environment to train in
     max_ep_len: int = 1000       # Maximum steps per episode. Higher = longer episodes, more exploration
-    max_training_timesteps: int = int(1e5)  # Total training steps. Higher = more training time, better convergence
+    max_training_timesteps: int = int(5e4)  # Total training steps. Higher = more training time, better convergence
     has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
     continuous_actions: bool = True  # Specific flag for PettingZoo environments
 
@@ -21,7 +21,7 @@ class LogConfig:
     log_dir: str = "logs/PPO_logs"        # Directory for storing logs
     model_dir: str = "logs/PPO_preTrained"  # Directory for saving models
     tensorboard_dir: str = "runs"         # Directory for tensorboard logs
-    run_name: str = "fixing_IPPO"   # Identifier for this training run
+    run_name: str = "MAPPO_start"   # Identifier for this training run
 
 @dataclass
 class ActionConfig:
@@ -51,6 +51,10 @@ class PPOConfig:
     normalize_advantages = True
     value_reg_coef: float = 0.01  # Value function regularization coefficient
     critic_clip_coef: float = 0.2  # Separate clip coefficient for critic gradients
+    use_centralized_critic: bool = True
+    critic_hidden_dim: int = 256
+    critic_num_layers: int = 2
+    buffer_size: int = int(1e6)  # Added this line - size of replay buffer
 
 @dataclass
 class Config:

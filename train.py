@@ -9,6 +9,7 @@ import json
 from dataclasses import asdict
 import platform
 from utils.env_factory import make_env
+from trainers.mappo_trainer import MAPPOTrainer
 
 def save_config_to_json(cfg: Config, writer_dir: str):
     """
@@ -108,22 +109,22 @@ def train(
 
     # Initialize agents with the writer
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    ppo_agents = [
-        PPO(state_dim=state_dim,
-            action_dim=action_dim,
-            cfg=cfg,
-            writer=writer)
-        for _ in range(env.num_agents)
-    ]
+    trainer = MAPPOTrainer(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        num_agents=env.num_agents,
+        cfg=cfg,
+        writer=writer
+    )
 
     # Handle model loading for different scenarios
     if pretrained_path:
         print(f"Fine-tuning from pretrained models in: {pretrained_path}")
         # Load pretrained models
-        load_checkpoint(ppo_agents, pretrained_path)
+        load_checkpoint(trainer, pretrained_path)
             
         # Modify learning rates for fine-tuning
-        for agent in ppo_agents:
+        for agent in trainer.agents:
             for param_group in agent.optimizer.param_groups:
                 param_group['lr'] *= 0.1  # Reduce learning rate for fine-tuning
                 
@@ -131,7 +132,7 @@ def train(
         
     elif checkpoint_path:
         print(f"Resuming training from checkpoint directory: {checkpoint_path}")
-        load_checkpoint(ppo_agents, checkpoint_path)
+        load_checkpoint(trainer, checkpoint_path)
         print("Resumed from checkpoint successfully")
 
     # Set initial random seed if specified
@@ -163,57 +164,39 @@ def train(
     # Start training loop
     start_time = datetime.now().replace(microsecond=0)
     while time_step <= cfg.env.max_training_timesteps:
-        # Generate new random seed for each episode
-        episode_seed = np.random.randint(0, 10000)
-        
-        # Reset environment with new seed
-        state_tuple = env.reset(seed=episode_seed)  # Pass seed directly to reset
-        observations = state_tuple[0]
         current_ep_reward = 0
         current_ep_length = 0
-        
-        while current_ep_length < cfg.env.max_ep_len:
-            all_agents = list(env.agent_name_to_index.keys())
-            actions = {}
-            
-            # Process each agent
-            for agent_idx in all_agents:
-                agent_index = env.agent_name_to_index[agent_idx]
-                agent_state = observations[agent_idx]
-                
-                agent_state_tensor = torch.FloatTensor(agent_state).to(device)
-                action = ppo_agents[agent_index].select_action(agent_state_tensor)
-                
-                if cfg.env.has_continuous_action_space:
-                    action = action.flatten()
-                else:
-                    action = int(action)
-                    
-                actions[agent_idx] = action
 
-            # Step environment
-            next_observations, rewards, terminations, truncations, infos = env.step(actions)
-            
-            # Calculate average reward across all agents for this step
-            step_reward = sum(rewards.values()) / len(rewards)
-            current_ep_reward += step_reward  # Add average reward
-            
-            # Normalize rewards
-            rewards_array = np.array(list(rewards.values()))
-            reward_normalizer.update(rewards_array)
-            normalized_rewards = reward_normalizer.normalize(rewards_array)
-            
-            # Update buffers with normalized rewards
-            for agent_idx, reward in zip(rewards.keys(), normalized_rewards):
-                agent_index = env.agent_name_to_index[agent_idx]
-                agent = ppo_agents[agent_index]
-                agent.buffer.rewards.append(reward)
-                agent.buffer.is_terminals.append(terminations[agent_idx] or truncations[agent_idx])
+        # Reset environment
+        observations = env.reset()[0]  # Get initial observations
 
+        while True:
+            # Select action with policy
+            actions_dict = trainer.select_actions(observations)  # Returns dict of actions
+            
+            # Step environment with actions dictionary
+            next_observations, rewards, terminations, truncations, infos = env.step(actions_dict)
+            
+            # Store transition in buffer
+            trainer.buffer.add(
+                states=observations,
+                actions=actions_dict,
+                rewards=rewards,
+                next_states=next_observations,
+                dones={k: terminations[k] or truncations[k] for k in terminations.keys()}
+            )
+
+            # Update observations
             observations = next_observations
+            
+            # Calculate episode reward
+            step_reward = sum(rewards.values()) / len(rewards)  # Average reward across agents
+            current_ep_reward += step_reward
+            
             time_step += 1
             current_ep_length += 1
 
+            # Check if episode is done
             if all(terminations.values()) or all(truncations.values()):
                 break
 
@@ -224,14 +207,16 @@ def train(
         print_running_reward += current_ep_reward
         print_running_episodes += 1
         
-        # Update if its time
-        if time_step % (cfg.env.max_ep_len * cfg.ppo.update_timestep) == 0:
-            for agent in ppo_agents:
-                agent.update()
+        # Log episode stats at the end of each episode
+        trainer.log_episode_stats(current_ep_reward, current_ep_length)
+        
+        # Update if enough steps have been taken
+        if time_step % (cfg.ppo.update_timestep * cfg.env.max_ep_len) == 0:
+            trainer.update()
 
         # Decay action std if needed
         if cfg.env.has_continuous_action_space and time_step % cfg.action.action_std_decay_freq == 0:
-            for agent in ppo_agents:
+            for agent in trainer.agents:
                 agent.decay_action_std(cfg.action.action_std_decay_rate, 
                                      cfg.action.min_action_std)
 
@@ -257,7 +242,7 @@ def train(
         if time_step % cfg.log.save_model_freq == 0:
             print("--------------------------------------------------------------------------------------------")
             print("saving model checkpoints...")
-            save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
+            save_checkpoint(trainer, model_dir_checkpoint, writer_dir_checkpoint)
             print("models saved at:")
             print(f"- {model_dir_checkpoint}")
             print(f"- {writer_dir_checkpoint}")
@@ -271,7 +256,7 @@ def train(
         writer.add_scalar('Training/average_reward', episode_avg_reward, i_episode)
         
         if cfg.env.has_continuous_action_space:
-            writer.add_scalar('Policy/action_std', ppo_agents[0].action_std, i_episode)
+            writer.add_scalar('Policy/action_std', trainer.agents[0].action_std, i_episode)
 
         log_running_reward += current_ep_reward
         log_running_episodes += 1
@@ -285,7 +270,7 @@ def train(
     
     # Save final model
     print("Saving final model...")
-    save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
+    save_checkpoint(trainer, model_dir_checkpoint, writer_dir_checkpoint)
     print("Final model saved at:")
     print(f"- {model_dir_checkpoint}")
     print(f"- {writer_dir_checkpoint}")
@@ -293,28 +278,28 @@ def train(
     if return_reward:
         return final_avg_reward
 
-def save_checkpoint(agents, model_dir_checkpoint, writer_dir_checkpoint):
+def save_checkpoint(trainer, model_dir_checkpoint, writer_dir_checkpoint):
     """
     Save agent checkpoints in both locations:
     - model_dir: Full path with timestamp etc.
     - writer_dir: Simple 'model_agentX.pth' in the run directory
     """
     # Save in model_dir (archive)
-    for agent_idx, agent in enumerate(agents):
+    for agent_idx, agent in enumerate(trainer.agents):
         model_path = model_dir_checkpoint.replace('.pth', f'_agent{agent_idx}.pth')
         agent.save(model_path)
     
     # Save in writer_dir (run directory)
-    for agent_idx, agent in enumerate(agents):
+    for agent_idx, agent in enumerate(trainer.agents):
         writer_path = os.path.join(os.path.dirname(writer_dir_checkpoint), f'model_agent{agent_idx}.pth')
         agent.save(writer_path)
 
-def load_checkpoint(agents, checkpoint_dir):
+def load_checkpoint(trainer, checkpoint_dir):
     """
     Load agent checkpoints from a run directory
     checkpoint_dir: path to the run directory containing model_agent{X}.pth files
     """
-    for agent_idx, agent in enumerate(agents):
+    for agent_idx, agent in enumerate(trainer.agents):
         agent_checkpoint = os.path.join(checkpoint_dir, f'model_agent{agent_idx}.pth')
         if not os.path.exists(agent_checkpoint):
             raise FileNotFoundError(f"Model for agent {agent_idx} not found at: {agent_checkpoint}")

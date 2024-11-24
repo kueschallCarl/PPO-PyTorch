@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from models.actor_critic import ActorCritic
-from utils.buffer import RolloutBuffer
+from models.actor_critic import ActorCritic, Critic, CentralizedCritic
+from utils.buffer import SharedReplayBuffer
 from config.config import Config
 from torch.utils.tensorboard import SummaryWriter
 import os
@@ -11,35 +11,55 @@ import numpy as np
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 class PPO:
-    def __init__(self, state_dim, action_dim, cfg: Config, writer: SummaryWriter = None):
-        self.cfg = cfg
+    def __init__(self, state_dim, action_dim, cfg: Config, writer: SummaryWriter = None, critic_type='centralized', num_agents=1):
         self.has_continuous_action_space = cfg.env.has_continuous_action_space
+        self.action_std = cfg.action.action_std if self.has_continuous_action_space else None
+        self.device = cfg.device
         
-        if self.has_continuous_action_space:
-            self.action_std = cfg.action.action_std
-        
+        # Add PPO hyperparameters as attributes
         self.gamma = cfg.ppo.gamma
         self.eps_clip = cfg.ppo.eps_clip
         self.K_epochs = cfg.ppo.K_epochs
+        self.gae_lambda = cfg.ppo.gae_lambda
         self.entropy_coef = cfg.ppo.entropy_coef
-        self.buffer = RolloutBuffer()
+        self.value_loss_coef = cfg.ppo.value_loss_coef
+        self.max_grad_norm = cfg.ppo.max_grad_norm
+        self.normalize_advantages = cfg.ppo.normalize_advantages
+        
+        # Store dimensions
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        self.num_agents = num_agents
 
+        # Initialize action variance
+        if self.has_continuous_action_space:
+            self.action_var = torch.full((action_dim,), self.action_std * self.action_std).to(self.device)
+        
+        # Initialize buffer
+        self.buffer = SharedReplayBuffer(state_dim, action_dim, num_agents, cfg.ppo.buffer_size, cfg.device)
+        
+        # Initialize actor-critic
         self.policy = ActorCritic(
             state_dim=state_dim,
             action_dim=action_dim,
             has_continuous_action_space=self.has_continuous_action_space,
-            action_std_init=cfg.action.action_std
-        ).to(cfg.device)
+            action_std_init=self.action_std,
+            critic_type=critic_type,
+            num_agents=num_agents
+        ).to(self.device)
         
         self.policy_old = ActorCritic(
             state_dim=state_dim,
             action_dim=action_dim,
             has_continuous_action_space=self.has_continuous_action_space,
-            action_std_init=cfg.action.action_std
-        ).to(cfg.device)
+            action_std_init=self.action_std,
+            critic_type=critic_type,
+            num_agents=num_agents
+        ).to(self.device)
         
         self.policy_old.load_state_dict(self.policy.state_dict())
         
+        # Initialize optimizer
         self.optimizer = torch.optim.Adam([
             {'params': self.policy.actor.parameters(), 'lr': cfg.ppo.lr_actor},
             {'params': self.policy.critic.parameters(), 'lr': cfg.ppo.lr_critic}
@@ -51,108 +71,90 @@ class PPO:
         self.writer = writer or SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
                                         f"{cfg.env.env_name}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
         
-        # Log network graph
-        dummy_state = torch.zeros(1, state_dim).to(cfg.device)
-        self.writer.add_graph(self.policy, dummy_state)
+        # Only add graph visualization if not using centralized critic
+        if writer and critic_type != 'centralized':
+            # Log network graph
+            dummy_state = torch.zeros(1, state_dim).to(cfg.device)
+            self.writer.add_graph(self.policy, dummy_state)
+        elif writer:
+            # For centralized critic, we'll skip the graph visualization
+            print("Skipping network visualization for centralized critic")
 
     def set_action_std(self, new_action_std):
+        """Set the action standard deviation"""
         if self.has_continuous_action_space:
             self.action_std = new_action_std
+            self.action_var = torch.full((self.action_dim,), new_action_std * new_action_std).to(self.device)
             self.policy.set_action_std(new_action_std)
             self.policy_old.set_action_std(new_action_std)
         else:
-            print("WARNING : Calling PPO::set_action_std() on discrete action space policy")
+            print("WARNING: Calling PPO::set_action_std() on discrete action space policy")
 
     def decay_action_std(self, action_std_decay_rate, min_action_std):
+        """Decay the action standard deviation"""
         if self.has_continuous_action_space:
             self.action_std = self.action_std - action_std_decay_rate
             self.action_std = round(self.action_std, 4)
-            if (self.action_std <= min_action_std):
+            if self.action_std <= min_action_std:
                 self.action_std = min_action_std
                 print("setting actor output action_std to min_action_std : ", self.action_std)
             else:
                 print("setting actor output action_std to : ", self.action_std)
             self.set_action_std(self.action_std)
         else:
-            print("WARNING : Calling PPO::decay_action_std() on discrete action space policy")
+            print("WARNING: Calling PPO::decay_action_std() on discrete action space policy")
 
-    def select_action(self, state, deterministic=False):
+    def select_action(self, state, actions=None, global_state=None, deterministic=False):
         if not isinstance(state, torch.Tensor):
             state = torch.FloatTensor(state).to(self.device)
         
-        if self.has_continuous_action_space:
-            with torch.no_grad():
-                # Convert state to tensor, handling both dict and array inputs
-                if isinstance(state, dict):
-                    # We're getting the state for a single agent, so just use that
-                    state = state
-                elif isinstance(state, np.ndarray):
-                    state = torch.FloatTensor(state).to(device)
-                
-                # Add batch dimension if not present
-                if len(state.shape) == 1:
-                    state = state.unsqueeze(0)
-                
-                if deterministic:
-                    # Use mean action directly without sampling
+        if len(state.shape) == 1:
+            state = state.unsqueeze(0)
+        
+        with torch.no_grad():
+            if deterministic:
+                if self.has_continuous_action_space:
                     action_mean = self.policy_old.actor(state)
                     action = action_mean
-                    # We still need state value for logging
-                    state_val = self.policy_old.critic(state)
                 else:
-                    # Stochastic action selection (training mode)
+                    action_probs = self.policy_old.actor(state)
+                    action = torch.argmax(action_probs)
+                
+                # Get state value for logging
+                if self.policy.critic_type == 'centralized':
+                    if actions is None or global_state is None:
+                        # During initial action selection, we might not have actions
+                        # Use zeros as placeholder actions
+                        batch_size = state.shape[0]
+                        dummy_actions = torch.zeros(batch_size, self.policy.num_agents, 
+                                                 self.action_dim).to(self.device)
+                        state_val = self.policy_old.critic(global_state, dummy_actions)
+                    else:
+                        state_val = self.policy_old.critic(global_state, actions)
+                else:
+                    state_val = self.policy_old.critic(state)
+            else:
+                # Stochastic action selection (training mode)
+                if self.policy.critic_type == 'centralized':
+                    action, action_logprob, state_val = self.policy_old.act(
+                        state, 
+                        actions=actions, 
+                        global_state=global_state
+                    )
+                else:
                     action, action_logprob, state_val = self.policy_old.act(state)
 
-                # Add checks for NaN values
-                if torch.isnan(action).any():
-                    print(f"Warning: NaN detected in action: {action}")
-                    action = torch.nan_to_num(action, 0.5)
+            # Add checks for NaN values
+            if torch.isnan(action).any():
+                print(f"Warning: NaN detected in action: {action}")
+                action = torch.nan_to_num(action, 0.5)
 
-                # Only append to buffer during training
-                if not deterministic:
-                    self.buffer.states.append(state)
-                    self.buffer.actions.append(action)
-                    self.buffer.logprobs.append(action_logprob)
-                    self.buffer.state_values.append(state_val)
-
+            if self.has_continuous_action_space:
                 action_np = action.detach().cpu().numpy().flatten()
                 if np.isnan(action_np).any():
                     action_np = np.nan_to_num(action_np, 0.5)
                 return np.clip(action_np, 0.0, 1.0)
-        else:
-            with torch.no_grad():
-                # Handle discrete action case similarly
-                if isinstance(state, dict):
-                    # Convert nested dict to flat array
-                    state_values = []
-                    for key, value in state.items():
-                        if isinstance(value, dict):
-                            # If value is a dict, flatten its values
-                            state_values.extend([v for v in value.values()])
-                        elif isinstance(value, (list, np.ndarray)):
-                            state_values.extend(value)
-                        else:
-                            state_values.append(value)
-                    state = torch.FloatTensor(state_values).to(device)
-                else:
-                    state = torch.FloatTensor(state).to(device)
-                
-                if deterministic:
-                    # Use argmax for deterministic action selection
-                    action_probs = self.policy_old.actor(state)
-                    action = torch.argmax(action_probs)
-                    state_val = self.policy_old.critic(state)
-                else:
-                    # Stochastic action selection (training mode)
-                    action, action_logprob, state_val = self.policy_old.act(state)
-                
-                # Only append to buffer during training
-                if not deterministic:
-                    self.buffer.states.append(state)
-                    self.buffer.actions.append(action)
-                    self.buffer.logprobs.append(action_logprob)
-                    self.buffer.state_values.append(state_val)
-
+            else:
                 return action.item()
 
     def compute_gae(self, rewards, values, dones, next_value=0):
@@ -333,3 +335,131 @@ class PPO:
         self.policy.load_state_dict(
             torch.load(checkpoint_path, map_location=lambda storage, loc: storage, weights_only=True)
         )
+
+    def update_mappo(self, states, actions, rewards, next_states, dones, agent_idx):
+        """Update policy for MAPPO"""
+        # Reshape tensors to have batch dimension first
+        batch_size = states.size(0)
+        
+        # Get data for current agent
+        agent_states = states[:, agent_idx]  # [batch_size, state_dim]
+        agent_actions = actions[:, agent_idx]  # [batch_size, action_dim]
+        agent_rewards = rewards[:, agent_idx]  # [batch_size]
+        agent_next_states = next_states[:, agent_idx]  # [batch_size, state_dim]
+        agent_dones = dones[:, agent_idx]  # [batch_size]
+        
+        # Get old action log probabilities
+        with torch.no_grad():
+            if self.has_continuous_action_space:
+                action_mean = self.policy_old.actor(agent_states)
+                action_var = self.action_var.expand_as(action_mean)
+                dist = torch.distributions.Normal(action_mean, action_var.sqrt())
+                old_action_logprobs = dist.log_prob(agent_actions).sum(dim=-1)  # Sum across action dimensions
+            else:
+                action_probs = self.policy_old.actor(agent_states)
+                dist = torch.distributions.Categorical(action_probs)
+                old_action_logprobs = dist.log_prob(agent_actions)
+        
+        # Compute returns and advantages
+        with torch.no_grad():
+            # Get values for current states using centralized critic
+            values = self.policy.critic(states, actions).squeeze(-1)  # [batch_size]
+            
+            # Get values for next states
+            next_actions = torch.zeros_like(actions)  # Placeholder for next actions
+            next_values = self.policy.critic(next_states, next_actions).squeeze(-1)  # [batch_size]
+            
+            # Compute returns and advantages
+            returns = torch.zeros(batch_size, device=self.device)
+            advantages = torch.zeros(batch_size, device=self.device)
+            gae = 0
+            
+            for t in reversed(range(batch_size)):
+                if t == batch_size - 1:
+                    next_value = next_values[t]
+                else:
+                    next_value = values[t + 1]
+                    
+                delta = agent_rewards[t] + self.gamma * next_value * (1 - agent_dones[t]) - values[t]
+                gae = delta + self.gamma * self.gae_lambda * (1 - agent_dones[t]) * gae
+                
+                returns[t] = gae + values[t]
+                advantages[t] = gae
+                
+            # Normalize advantages
+            if self.normalize_advantages:
+                advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        
+        # Track statistics
+        avg_loss = 0
+        avg_value_loss = 0
+        avg_policy_loss = 0
+        avg_entropy = 0
+        avg_clip_fraction = 0
+        avg_approx_kl = 0
+        
+        # Optimize policy for K epochs
+        for _ in range(self.K_epochs):
+            # Get current policy distributions
+            if self.has_continuous_action_space:
+                action_mean = self.policy.actor(agent_states)
+                action_var = self.action_var.expand_as(action_mean)
+                dist = torch.distributions.Normal(action_mean, action_var.sqrt())
+                action_logprobs = dist.log_prob(agent_actions).sum(dim=-1)  # Sum across action dimensions
+            else:
+                action_probs = self.policy.actor(agent_states)
+                dist = torch.distributions.Categorical(action_probs)
+                action_logprobs = dist.log_prob(agent_actions)
+                
+            # Get entropy
+            dist_entropy = dist.entropy().mean()
+            
+            # Get state values from critic
+            state_values = self.policy.critic(states, actions).squeeze(-1)
+            
+            # Calculate ratios and surrogate losses
+            ratios = torch.exp(action_logprobs - old_action_logprobs)  # [batch_size]
+            surr1 = ratios * advantages  # [batch_size]
+            surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * advantages  # [batch_size]
+            
+            # Calculate losses
+            policy_loss = -torch.min(surr1, surr2).mean()
+            value_loss = 0.5 * ((returns - state_values) ** 2).mean()
+            entropy_loss = -self.entropy_coef * dist_entropy.mean()
+            
+            # Total loss
+            total_loss = policy_loss + self.value_loss_coef * value_loss + entropy_loss
+            
+            # Update policy
+            self.optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+            self.optimizer.step()
+            
+            # Calculate clip fraction
+            clip_fraction = ((ratios - 1.0).abs() > self.eps_clip).float().mean()
+            
+            # Calculate approximate KL divergence
+            approx_kl = (old_action_logprobs - action_logprobs).mean()
+            
+            # Accumulate statistics
+            avg_loss += total_loss.item()
+            avg_value_loss += value_loss.item()
+            avg_policy_loss += policy_loss.item()
+            avg_entropy += dist_entropy.mean().item()
+            avg_clip_fraction += clip_fraction.item()
+            avg_approx_kl += approx_kl.item()
+        
+        # Return average losses and metrics
+        return {
+            'total_loss': avg_loss / self.K_epochs,
+            'value_loss': avg_value_loss / self.K_epochs,
+            'policy_loss': avg_policy_loss / self.K_epochs,
+            'entropy_loss': avg_entropy / self.K_epochs,
+            'clip_fraction': avg_clip_fraction / self.K_epochs,
+            'approx_kl': avg_approx_kl / self.K_epochs,
+            'mean_value': state_values.mean().item(),
+            'value_std': state_values.std().item(),
+            'mean_ratio': ratios.mean().item(),
+            'mean_advantage': advantages.mean().item()
+        }
