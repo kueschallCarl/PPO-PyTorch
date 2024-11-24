@@ -62,8 +62,8 @@ class TrainingConfig:
     normalize_advantages: bool = True
     num_updates: int = 10
     eval_frequency: int = 100
-    action_std_decay_freq: int = 10000
-    action_std_decay_rate: float = 0.01
+    action_std_decay_freq: int = 1000
+    action_std_decay_rate: float = 0.025
     min_action_std: float = 0.1
 @dataclass
 class Config:

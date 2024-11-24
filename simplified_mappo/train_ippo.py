@@ -4,7 +4,6 @@ import torch
 import numpy as np
 from algorithms.ppo import PPO
 from config.config import Config
-from torch.utils.tensorboard import SummaryWriter
 import json
 from dataclasses import asdict
 import platform
@@ -96,6 +95,9 @@ def train_ippo(
     """
     Train PPO agents using local MPE implementation
     """
+    # Initialize global_step at the start of the function
+    global_step = 0
+    
     # Initialize final_avg_reward at the start
     final_avg_reward = 0
     
@@ -123,7 +125,7 @@ def train_ippo(
         print("============================================================================================")
         logging.info(f"Starting training with config:")
         logging.info(f"Environment: {cfg.env.env_name}")
-        logging.info(f"Max training timesteps: {cfg.env.max_training_timesteps}")
+        logging.info(f"Max episodes: {cfg.env.max_episodes}")
 
         # Create env using local implementation
         world, state_dim, action_dim, scenario = make_env(cfg, render_mode='human' if render else None)
@@ -159,7 +161,6 @@ def train_ippo(
         model_dir_checkpoint = os.path.join(model_dir, checkpoint_filename)
         writer_dir_checkpoint = os.path.join(writer_dir, "model.pth")
         # Create writer
-        writer = SummaryWriter(writer_dir)
         
         # Save config to JSON
         save_config_to_json(cfg, writer_dir)
@@ -214,7 +215,7 @@ def train_ippo(
         
         # Start training loop
         start_time = datetime.now().replace(microsecond=0)
-        while time_step <= cfg.env.max_training_timesteps:
+        for i_episode in range(cfg.env.max_episodes):
             episode_seed = np.random.randint(0, 10000)
             
             # Reset world using scenario instance
@@ -276,9 +277,7 @@ def train_ippo(
                 observations = next_observations
                 time_step += 1
                 current_ep_length += 1
-
-                # Update global step counter
-                global_step = time_step  # Use time_step as our global counter
+                global_step += 1  # Keep tracking global steps for logging
 
                 # Log step metrics to wandb with global step
                 if cfg.log.use_wandb and time_step % cfg.log.log_freq == 0:
@@ -341,13 +340,6 @@ def train_ippo(
 
             # After episode ends, add these lines:
             episode_avg_reward = current_ep_reward / time_step
-            writer.add_scalar('Training/episode_reward', current_ep_reward, i_episode)
-            writer.add_scalar('Training/episode_length', time_step, i_episode)
-            writer.add_scalar('Training/average_reward', episode_avg_reward, i_episode)
-            
-            if cfg.env.has_continuous_action_space:
-                writer.add_scalar('Policy/action_std', ppo_agents[0].action_std, i_episode)
-
             log_running_reward += current_ep_reward
             log_running_episodes += 1
             i_episode += 1
@@ -359,7 +351,7 @@ def train_ippo(
                     # Environment state
                     "env/episode_progress": current_ep_length / cfg.env.episode_length,
                     "env/total_episodes": i_episode,
-                    "env/steps_remaining": cfg.env.max_training_timesteps - time_step,
+                    "env/steps_remaining": cfg.env.max_episodes - time_step,
                     
                     # Reward tracking
                     "rewards/step_reward_raw": step_reward,
@@ -400,7 +392,7 @@ def train_ippo(
                     # Training progress
                     "training/episodes_completed": i_episode,
                     "training/total_timesteps": time_step,
-                    "training/completion_percentage": (time_step / cfg.env.max_training_timesteps) * 100,
+                    "training/completion_percentage": (time_step / cfg.env.max_episodes) * 100,
                     
                     # Running statistics
                     "training/running_reward": print_running_reward / max(print_running_episodes, 1),
@@ -423,11 +415,52 @@ def train_ippo(
                         # Use global step in summary
                         wandb.run.summary[f"agent{agent_idx}_model_step_{global_step}"] = model_path
 
+            # Evaluate policy periodically
+            if (i_episode + 1) % cfg.training.eval_frequency == 0:
+                eval_rewards = []
+                # Run multiple evaluation episodes
+                for _ in range(5):  # Run 5 evaluation episodes
+                    scenario.reset_world(world)
+                    eval_ep_reward = 0
+                    
+                    # Run one evaluation episode
+                    for _ in range(cfg.env.episode_length):
+                        actions = {}
+                        for i, agent in enumerate(world.agents):
+                            agent_obs = scenario.observation(agent, world)
+                            agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
+                            # Use deterministic action selection for evaluation
+                            action = ppo_agents[i].select_action(agent_state_tensor, deterministic=True)
+                            actions[f'agent_{i}'] = action
+                            agent.action.u = action  # Set physical action
+                        
+                        # Step world
+                        world.step()
+                        
+                        # Get rewards
+                        rewards = {f'agent_{i}': scenario.reward(agent, world) 
+                                 for i, agent in enumerate(world.agents)}
+                        eval_ep_reward += sum(rewards.values()) / len(rewards)
+                    
+                    eval_rewards.append(eval_ep_reward)
+                
+                # Calculate average evaluation reward
+                avg_eval_reward = sum(eval_rewards) / len(eval_rewards)
+                
+                if cfg.log.use_wandb:
+                    eval_metrics = {
+                        "eval/reward": avg_eval_reward,
+                        "eval/reward_diff": avg_eval_reward - current_ep_reward,
+                        "eval/reward_std": np.std(eval_rewards)
+                    }
+                    wandb.log(eval_metrics, step=global_step)
+                
+                print(f"Evaluation at episode {i_episode + 1}: Average Reward = {avg_eval_reward:.2f}")
+
         # Calculate final average reward
         final_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0
         
         log_f.close()
-        writer.close()
         
         # Save final model
         print("Saving final model...")
@@ -457,8 +490,6 @@ def train_ippo(
         # Safely close files if they exist
         if 'log_f' in locals() and not log_f.closed:
             log_f.close()
-        if 'writer' in locals():
-            writer.close()
 
     if return_reward:
         return final_avg_reward
