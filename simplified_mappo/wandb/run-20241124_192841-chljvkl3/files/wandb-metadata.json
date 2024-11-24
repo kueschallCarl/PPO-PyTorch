@@ -1,0 +1,46 @@
+{
+  "os":  "Linux-6.11.6-arch1-1-x86_64-with-glibc2.40",
+  "python":  "3.10.15",
+  "startedAt":  "2024-11-24T18:28:41.976726Z",
+  "args":  [
+    "--algorithm=mappo"
+  ],
+  "program":  "/mnt/RebeccaSSD/3-Projects/Bachelor/PPO-PyTorch/simplified_mappo/main.py",
+  "codePath":  "simplified_mappo/main.py",
+  "git":  {
+    "remote":  "git@github.com:kueschallCarl/PPO-PyTorch.git",
+    "commit":  "7c36132233b40d592103d80fd25416ec5ed05b03"
+  },
+  "email":  "c.kueschall@oth-aw.de",
+  "root":  "/mnt/RebeccaSSD/3-Projects/Bachelor/PPO-PyTorch/simplified_mappo",
+  "host":  "Terra",
+  "username":  "devv",
+  "executable":  "/mnt/RebeccaSSD/6-Apps/miniconda_envs/gym_env/bin/python",
+  "codePathLocal":  "main.py",
+  "cpu_count":  8,
+  "cpu_count_logical":  16,
+  "gpu":  "NVIDIA GeForce RTX 4080",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "256893308928",
+      "used":  "137672028160"
+    }
+  },
+  "memory":  {
+    "total":  "32751988736"
+  },
+  "cpu":  {
+    "count":  8,
+    "countLogical":  16
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA GeForce RTX 4080",
+      "memoryTotal":  "17171480576",
+      "cudaCores":  9728,
+      "architecture":  "Ada"
+    }
+  ],
+  "cudaVersion":  "12.7"
+}

@@ -1,0 +1,1 @@
+{"train/value_loss":24.589375019073486,"train/entropy":1.1940905054410298,"_step":355,"_timestamp":1.7324729391470299e+09,"train/policy_loss":-0.03642103215679526,"eval/reward":-92.45194655167558,"train/episode_reward":-2.3832334850880077,"eval/reward_diff":-90.07636748929073,"_wandb":{"runtime":17},"train/episode_duration":0.016507625579833984,"_runtime":17.195055093}

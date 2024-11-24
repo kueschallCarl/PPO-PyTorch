@@ -1,0 +1,89 @@
+_wandb:
+    value:
+        cli_version: 0.18.7
+        m: []
+        python_version: 3.10.15
+        t:
+            "1":
+                - 1
+                - 2
+                - 3
+                - 55
+            "2":
+                - 1
+                - 2
+                - 3
+                - 55
+            "3":
+                - 2
+                - 13
+                - 16
+                - 23
+                - 55
+                - 61
+            "4": 3.10.15
+            "5": 0.18.7
+            "8":
+                - 5
+            "12": 0.18.7
+            "13": linux-x86_64
+algorithm:
+    value: mappo
+buffer:
+    value:
+        advantage_normalization: true
+        batch_size: 64
+        size: 2048
+device:
+    value: cuda:0
+env:
+    value:
+        continuous_actions: true
+        env_name: simple_spread
+        episode_length: 25
+        has_continuous_action_space: true
+        max_episodes: 1000
+        max_training_timesteps: 100000
+        num_agents: 3
+log:
+    value:
+        log_dir: logs
+        log_freq: 1000
+        model_dir: models
+        print_freq: 1000
+        run_name: ippo_simple_spread_20241124_192841
+        save_model_freq: 50000
+        tensorboard_dir: runs
+        use_wandb: true
+        wandb_entity: null
+        wandb_project: simplified-mappo-implementation
+policy:
+    value:
+        action_std: 0.5
+        activation: tanh
+        gain: 0.01
+        hidden_sizes:
+            - 64
+            - 64
+        initialization: orthogonal
+seed:
+    value: null
+training:
+    value:
+        action_std_decay_freq: 10000
+        action_std_decay_rate: 0.01
+        clip_ratio: 0.2
+        entropy_coef: 0.01
+        eval_frequency: 100
+        gae_lambda: 0.95
+        gamma: 0.99
+        lr_actor: 0.0003
+        lr_critic: 0.0003
+        max_grad_norm: 0.5
+        min_action_std: 0.1
+        normalize_advantages: true
+        num_updates: 10
+        policy_loss_coef: 0.5
+        use_gae: true
+        use_value_clipping: true
+        value_loss_coef: 0.5

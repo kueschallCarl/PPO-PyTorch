@@ -16,33 +16,33 @@ class PPO:
         self.has_continuous_action_space = cfg.env.has_continuous_action_space
         
         if self.has_continuous_action_space:
-            self.action_std = cfg.action.action_std
+            self.action_std = cfg.policy.action_std
         
-        self.gamma = cfg.ppo.gamma
-        self.eps_clip = cfg.ppo.eps_clip
-        self.K_epochs = cfg.ppo.K_epochs
-        self.entropy_coef = cfg.ppo.entropy_coef
+        self.gamma = cfg.training.gamma
+        self.eps_clip = cfg.training.clip_ratio
+        self.K_epochs = cfg.training.num_updates
+        self.entropy_coef = cfg.training.entropy_coef
         self.buffer = RolloutBuffer()
 
         self.policy = ActorCritic(
             state_dim=state_dim,
             action_dim=action_dim,
             has_continuous_action_space=self.has_continuous_action_space,
-            action_std_init=cfg.action.action_std
+            action_std_init=cfg.policy.action_std
         ).to(cfg.device)
         
         self.policy_old = ActorCritic(
             state_dim=state_dim,
             action_dim=action_dim,
             has_continuous_action_space=self.has_continuous_action_space,
-            action_std_init=cfg.action.action_std
+            action_std_init=cfg.policy.action_std
         ).to(cfg.device)
         
         self.policy_old.load_state_dict(self.policy.state_dict())
         
         self.optimizer = torch.optim.Adam([
-            {'params': self.policy.actor.parameters(), 'lr': cfg.ppo.lr_actor},
-            {'params': self.policy.critic.parameters(), 'lr': cfg.ppo.lr_critic}
+            {'params': self.policy.actor.parameters(), 'lr': cfg.training.lr_actor},
+            {'params': self.policy.critic.parameters(), 'lr': cfg.training.lr_critic}
         ])
 
         self.MseLoss = nn.MSELoss()
@@ -168,7 +168,7 @@ class PPO:
                 next_advantage = 0
             
             delta = rewards[t] + self.gamma * next_value - values[t]
-            advantages[t] = delta + self.gamma * self.cfg.ppo.gae_lambda * next_advantage * (1 - dones[t])
+            advantages[t] = delta + self.gamma * self.cfg.training.gae_lambda * next_advantage * (1 - dones[t])
             
             next_advantage = advantages[t]
             next_value = values[t]
@@ -205,9 +205,9 @@ class PPO:
         dones_np = np.array([d for d in self.buffer.is_terminals])
         
         # Calculate advantages based on config
-        if self.cfg.ppo.use_gae:
+        if self.cfg.training.use_gae:
             advantages_np = self.compute_gae(rewards_np, values_np, dones_np)
-            advantages = torch.FloatTensor(advantages_np).to(device)
+            advantages = torch.FloatTensor(advantages_np).to(self.cfg.device)
             returns = advantages + old_state_values
         else:
             advantages, returns = self.compute_simple_advantage(
@@ -217,7 +217,7 @@ class PPO:
             )
         
         # Normalize advantages
-        if self.cfg.ppo.normalize_advantages:
+        if self.cfg.training.normalize_advantages:
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
         # Track statistics
@@ -238,7 +238,7 @@ class PPO:
             surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * advantages
 
             # Value loss calculation with optional clipping
-            if self.cfg.ppo.use_value_clipping:
+            if self.cfg.training.use_value_clipping:
                 value_pred_clipped = old_state_values + torch.clamp(
                     state_values - old_state_values,
                     -self.eps_clip * old_state_values.abs(),  # Scale clipping with value magnitude
@@ -260,8 +260,8 @@ class PPO:
             
             # Combine losses with proper coefficients
             loss = (
-                policy_loss * self.cfg.ppo.policy_loss_coef + 
-                value_loss * self.cfg.ppo.value_loss_coef + 
+                policy_loss * self.cfg.training.policy_loss_coef + 
+                value_loss * self.cfg.training.value_loss_coef + 
                 entropy_loss
             )
             
@@ -270,8 +270,8 @@ class PPO:
             loss.backward()
             
             # Clip gradients separately for actor and critic
-            torch.nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.cfg.ppo.max_grad_norm)
-            torch.nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.cfg.ppo.max_grad_norm * 0.5)  # Lower clip for critic
+            torch.nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.cfg.training.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.cfg.training.max_grad_norm * 0.5)  # Lower clip for critic
             
             self.optimizer.step()
 
@@ -312,7 +312,7 @@ class PPO:
 
         # Log value function specific metrics
         self.writer.add_scalar('Value/mean_value_change', (state_values - old_state_values).abs().mean().item(), self.total_steps)
-        if self.cfg.ppo.use_value_clipping:
+        if self.cfg.training.use_value_clipping:
             self.writer.add_scalar('Value/clipped_fraction', 
                 (value_losses_clipped < value_losses).float().mean().item(), 
                 self.total_steps)

@@ -8,37 +8,109 @@ import time
 from datetime import datetime
 import traceback
 import wandb
+from dataclasses import asdict, dataclass, field
+from typing import Optional, List
+import os
 
-def train(
-    scenario_name="simple_spread",
-    num_agents=3,
-    num_episodes=1000,
-    episode_length=25,
-    buffer_size=2048,
-    batch_size=64,
-    learning_rate=3e-4,
-    eval_frequency=100,
-    project_name="simplified-mappo-implementation",
-    experiment_name=None
-):
-    # Initialize wandb
-    if experiment_name is None:
-        experiment_name = f"{scenario_name}_{num_agents}agents_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    wandb.init(
-        project=project_name,
-        name=experiment_name,
-        config={
-            "scenario": scenario_name,
-            "num_agents": num_agents,
-            "num_episodes": num_episodes,
-            "episode_length": episode_length,
-            "buffer_size": buffer_size,
-            "batch_size": batch_size,
-            "learning_rate": learning_rate,
-            "eval_frequency": eval_frequency
-        }
-    )
+@dataclass
+class EnvConfig:
+    """Configuration for the environment settings"""
+    env_name: str = "simple_spread"  # Name of the environment to train in
+    num_agents: int = 3              # Number of agents in environment
+    episode_length: int = 25         # Length of each episode
+    max_episodes: int = 1000         # Maximum number of episodes
+    max_training_timesteps: int = int(1e5)  # Total training steps
+    has_continuous_action_space: bool = True
+    continuous_actions: bool = True
+
+@dataclass
+class LogConfig:
+    """Configuration for logging and saving models"""
+    print_freq: Optional[int] = None
+    log_freq: Optional[int] = None
+    save_model_freq: int = int(5e4)
+    log_dir: str = "logs"
+    model_dir: str = "models"
+    tensorboard_dir: str = "runs"
+    wandb_project: str = "simplified-mappo-implementation"
+    wandb_entity: Optional[str] = None
+    run_name: Optional[str] = None
+    use_wandb: bool = True
+
+@dataclass
+class BufferConfig:
+    """Configuration for replay buffer"""
+    size: int = 2048
+    batch_size: int = 64
+    advantage_normalization: bool = True
+
+@dataclass
+class PolicyConfig:
+    """Configuration for policy networks"""
+    hidden_sizes: List[int] = field(default_factory=lambda: [64, 64])
+    activation: str = "tanh"
+    initialization: str = "orthogonal"
+    gain: float = 0.01
+
+@dataclass
+class TrainingConfig:
+    """Shared training parameters"""
+    lr_actor: float = 3e-4
+    lr_critic: float = 3e-4
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_ratio: float = 0.2
+    entropy_coef: float = 0.01
+    value_loss_coef: float = 0.5
+    max_grad_norm: float = 0.5
+    use_gae: bool = True
+    normalize_advantages: bool = True
+    num_updates: int = 10
+    eval_frequency: int = 100
+
+@dataclass
+class Config:
+    """Main configuration class"""
+    env: EnvConfig = field(default_factory=EnvConfig)
+    log: LogConfig = field(default_factory=LogConfig)
+    buffer: BufferConfig = field(default_factory=BufferConfig)
+    policy: PolicyConfig = field(default_factory=PolicyConfig)
+    training: TrainingConfig = field(default_factory=TrainingConfig)
+    algorithm: str = "ippo"  # or "mappo"
+    seed: Optional[int] = None
+    device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
+
+    def __post_init__(self):
+        if self.log.run_name is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            self.log.run_name = f"{self.algorithm}_{self.env.env_name}_{timestamp}"
+
+    @classmethod
+    def from_args(cls, args):
+        """Create config from command line arguments"""
+        config = cls()
+        
+        # Update config with any non-None values from args
+        for key, value in vars(args).items():
+            if value is not None:
+                # Handle nested configs
+                if '.' in key:
+                    section, param = key.split('.')
+                    setattr(getattr(config, section), param, value)
+                else:
+                    setattr(config, key, value)
+        
+        return config
+
+def train_mappo(cfg: Config):
+    # Initialize wandb if enabled
+    if cfg.log.use_wandb:
+        wandb.init(
+            project=cfg.log.wandb_project,
+            entity=cfg.log.wandb_entity,
+            name=cfg.log.run_name,
+            config=asdict(cfg)
+        )
     
     # Set up logging
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -53,16 +125,16 @@ def train(
     
     try:
         logging.info(f"Starting training with config:")
-        logging.info(f"Scenario: {scenario_name}, Agents: {num_agents}")
-        logging.info(f"Episodes: {num_episodes}, Episode length: {episode_length}")
-        logging.info(f"Buffer size: {buffer_size}, Batch size: {batch_size}, LR: {learning_rate}")
+        logging.info(f"Scenario: {cfg.env.env_name}, Agents: {cfg.env.num_agents}")
+        logging.info(f"Episodes: {cfg.env.max_episodes}, Episode length: {cfg.env.episode_length}")
+        logging.info(f"Buffer size: {cfg.buffer.size}, Batch size: {cfg.buffer.batch_size}, LR: {cfg.training.lr_actor}")
 
         # Initialize device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device(cfg.device)
         logging.info(f"Using device: {device}")
         
         # Initialize environment and runner
-        runner = Runner(scenario_name, num_agents, device=device)
+        runner = Runner(cfg.env.env_name, cfg.env.num_agents, device=device)
         
         # Initialize policy and algorithm
         policy = MLPPolicy(
@@ -72,26 +144,26 @@ def train(
         
         algorithm = MAPPO(
             policy=policy,
-            lr=learning_rate
+            lr=cfg.training.lr_actor
         )
         
         # Initialize buffer
         buffer = SharedReplayBuffer(
-            num_agents=num_agents,
+            num_agents=cfg.env.num_agents,
             obs_space=runner.obs_space,
             act_space=runner.action_space,
-            size=buffer_size,
+            size=cfg.buffer.size,
             device=device
         )
         
         # Training loop
         start_time = time.time()
-        for episode in range(num_episodes):
+        for episode in range(cfg.env.max_episodes):
             episode_start = time.time()
             
             try:
                 # Collect experience
-                episode_reward = runner.collect_episodes(policy, buffer, episode_length)
+                episode_reward = runner.collect_episodes(policy, buffer, cfg.env.episode_length)
                 
                 # Track training metrics
                 episode_metrics = {
@@ -101,7 +173,7 @@ def train(
                 
                 # Update policy
                 policy_metrics = {}
-                for sample in buffer.get_samples(batch_size):
+                for sample in buffer.get_samples(cfg.buffer.batch_size):
                     update_info = algorithm.update(sample)
                     # Aggregate policy update metrics
                     for k, v in update_info.items():
@@ -119,11 +191,11 @@ def train(
                 # Log progress
                 episode_duration = time.time() - episode_start
                 if (episode + 1) % 10 == 0:
-                    logging.info(f"Episode {episode + 1}/{num_episodes} completed in {episode_duration:.2f}s. "
+                    logging.info(f"Episode {episode + 1}/{cfg.env.max_episodes} completed in {episode_duration:.2f}s. "
                                f"Reward: {episode_reward:.2f}")
                 
                 # Evaluate policy
-                if (episode + 1) % eval_frequency == 0:
+                if (episode + 1) % cfg.training.eval_frequency == 0:
                     logging.info("Starting evaluation...")
                     try:
                         eval_reward = runner.eval_policy(policy)
@@ -155,21 +227,4 @@ def train(
         raise
     
     finally:
-        wandb.finish()
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--scenario", type=str, default="simple_spread", 
-                       choices=["simple_spread"])
-    parser.add_argument("--num_agents", type=int, default=3)
-    parser.add_argument("--project_name", type=str, default="simplified-mappo")
-    parser.add_argument("--experiment_name", type=str, default=None)
-    args = parser.parse_args()
-    
-    train(
-        scenario_name=args.scenario,
-        num_agents=args.num_agents,
-        project_name=args.project_name,
-        experiment_name=args.experiment_name
-    ) 
+        wandb.finish() 
