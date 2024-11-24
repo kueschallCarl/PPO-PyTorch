@@ -76,8 +76,8 @@ class Runner:
             
             collection_time = time.time() - collection_start
             mean_reward = np.mean(episode_rewards)
-            logging.debug(f"Collected {episode_steps} steps in {collection_time:.2f}s. "
-                         f"Mean reward: {mean_reward:.3f}, Complete episodes: {num_resets}")
+            #logging.debug(f"Collected {episode_steps} steps in {collection_time:.2f}s. "
+            #             f"Mean reward: {mean_reward:.3f}, Complete episodes: {num_resets}")
             
             return mean_reward
             
