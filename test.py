@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 import torch
 import numpy as np
-from models.ppo import PPO
+from trainers.mappo_trainer import MAPPOTrainer
 from config.config import Config, TestConfig
 import time
 from torch.utils.tensorboard import SummaryWriter
@@ -26,68 +26,49 @@ def test(cfg: Config, test_cfg: TestConfig):
 
     # Create writer directory path for test results
     writer_dir = os.path.join(cfg.log.tensorboard_dir, 
-                           f"TEST_PPO_{cfg.env.env_name}_{test_cfg.random_seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                           f"TEST_MAPPO_{cfg.env.env_name}_{test_cfg.random_seed}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     writer = SummaryWriter(writer_dir)
 
-    # Initialize agents
+    # Initialize MAPPO trainer
     device = torch.device(cfg.device)
-    ppo_agents = [
-        PPO(state_dim=state_dim,
-            action_dim=action_dim,
-            cfg=cfg, writer=writer)
-        for _ in range(env.num_agents)
-    ]
+    trainer = MAPPOTrainer(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        num_agents=env.num_agents,
+        cfg=cfg,
+        writer=writer
+    )
 
-    # Load pretrained weights for each agent
+    # Load pretrained weights
     print("Loading pretrained models from directory:", test_cfg.checkpoint_path)
-    checkpoint_dir = test_cfg.checkpoint_path  # This should now be the run directory path
-    for agent_idx, agent in enumerate(ppo_agents):
-        # Construct agent-specific model path
-        agent_checkpoint = os.path.join(checkpoint_dir, f'model_agent{agent_idx}.pth')
-        
-        if not os.path.exists(agent_checkpoint):
-            raise FileNotFoundError(f"Model for agent {agent_idx} not found at: {agent_checkpoint}")
-            
-        print(f"Loading agent {agent_idx} model from: {agent_checkpoint}")
-        agent.load(agent_checkpoint)
-        agent.policy_old.eval()  # Set policy network to evaluation mode
-        agent.policy.eval()      # Set policy network to evaluation mode
+    if not os.path.exists(test_cfg.checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint directory not found at: {test_cfg.checkpoint_path}")
+    
+    trainer.load(os.path.join(test_cfg.checkpoint_path, 'model.pth'))
+    
+    # Set all agents to evaluation mode
+    for agent in trainer.agents:
+        agent.policy_old.eval()
+        agent.policy.eval()
 
     # Testing loop
     test_running_reward = 0
     
     with torch.no_grad():  # Disable gradient computation
         for ep in range(1, test_cfg.total_test_episodes + 1):
-            # Update reset() call to handle tuple return
             state_tuple = env.reset()
             observations = state_tuple[0]  # First element contains observations
             ep_reward = 0
             t = 0
             
             if test_cfg.render:
-                env.render()  # Render initial state
+                env.render()
                 time.sleep(test_cfg.frame_delay)
             
             while True:
-                actions = {}
+                # Get actions from MAPPO trainer
+                actions = trainer.select_actions(observations, deterministic=True)
                 
-                # Process each agent
-                for agent_idx, obs in observations.items():
-                    agent_index = env.agent_name_to_index[agent_idx]
-                    
-                    # Convert observation to tensor
-                    agent_state_tensor = torch.FloatTensor(obs).to(device)
-                    
-                    # Get action from policy
-                    action = ppo_agents[agent_index].select_action(agent_state_tensor, deterministic=True)                    
-                    # Ensure action is in the correct format
-                    if cfg.env.has_continuous_action_space:
-                        action = action.flatten()
-                    else:
-                        action = int(action)
-                    
-                    actions[agent_idx] = action
-
                 # Step environment
                 observations, rewards, terminations, truncations, infos = env.step(actions)
                 
@@ -111,6 +92,10 @@ def test(cfg: Config, test_cfg: TestConfig):
 
                 # Log step-level metrics
                 writer.add_scalar('Test/step_reward', sum(rewards.values()), t + (ep - 1) * cfg.env.max_ep_len)
+                
+                # Log additional MAPPO-specific metrics
+                for agent_idx, reward in rewards.items():
+                    writer.add_scalar(f'Test/Agent_{agent_idx}/step_reward', reward, t + (ep - 1) * cfg.env.max_ep_len)
 
             test_running_reward += ep_reward
             print(f'Episode: {ep}/{test_cfg.total_test_episodes} \t Reward: {ep_reward:.2f}')
@@ -119,6 +104,11 @@ def test(cfg: Config, test_cfg: TestConfig):
             writer.add_scalar('Test/episode_reward', ep_reward, ep)
             writer.add_scalar('Test/episode_length', t, ep)
             writer.add_scalar('Test/running_average_reward', test_running_reward / ep, ep)
+            
+            # Log per-agent metrics
+            for agent_idx in range(env.num_agents):
+                writer.add_scalar(f'Test/Agent_{agent_idx}/episode_reward', 
+                                sum(rewards[f'agent_{agent_idx}'] for _ in range(t)), ep)
 
     env.close()
 

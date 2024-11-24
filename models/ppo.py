@@ -337,67 +337,62 @@ class PPO:
         )
 
     def update_mappo(self, states, actions, rewards, next_states, dones, agent_idx):
-        """Update policy for MAPPO"""
-        # Reshape tensors to have batch dimension first
+        """Update policy for MAPPO with value clipping"""
         batch_size = states.size(0)
-        
-        # Get data for current agent
-        agent_states = states[:, agent_idx]  # [batch_size, state_dim]
-        agent_actions = actions[:, agent_idx]  # [batch_size, action_dim]
-        agent_rewards = rewards[:, agent_idx]  # [batch_size]
-        agent_next_states = next_states[:, agent_idx]  # [batch_size, state_dim]
-        agent_dones = dones[:, agent_idx]  # [batch_size]
-        
-        # Get old action log probabilities
+        agent_states = states[:, agent_idx]
+        agent_actions = actions[:, agent_idx]
+        agent_rewards = rewards[:, agent_idx]
+        agent_dones = dones[:, agent_idx]
+
+        # Get old values and action log probs
         with torch.no_grad():
+            old_values = self.policy_old.critic(states, actions).squeeze(-1)
             if self.has_continuous_action_space:
-                action_mean = self.policy_old.actor(agent_states)
-                action_var = self.action_var.expand_as(action_mean)
-                dist = torch.distributions.Normal(action_mean, action_var.sqrt())
-                old_action_logprobs = dist.log_prob(agent_actions).sum(dim=-1)  # Sum across action dimensions
+                old_action_mean = self.policy_old.actor(agent_states)
+                old_action_var = self.action_var.expand_as(old_action_mean)
+                old_dist = torch.distributions.Normal(old_action_mean, old_action_var.sqrt())
+                old_action_logprobs = old_dist.log_prob(agent_actions).sum(dim=-1)
             else:
-                action_probs = self.policy_old.actor(agent_states)
-                dist = torch.distributions.Categorical(action_probs)
-                old_action_logprobs = dist.log_prob(agent_actions)
-        
-        # Compute returns and advantages
-        with torch.no_grad():
-            # Get values for current states using centralized critic
-            values = self.policy.critic(states, actions).squeeze(-1)  # [batch_size]
-            
-            # Get values for next states
-            next_actions = torch.zeros_like(actions)  # Placeholder for next actions
-            next_values = self.policy.critic(next_states, next_actions).squeeze(-1)  # [batch_size]
+                old_action_probs = self.policy_old.actor(agent_states)
+                old_dist = torch.distributions.Categorical(old_action_probs)
+                old_action_logprobs = old_dist.log_prob(agent_actions)
+
+            # Compute next state values
+            next_values = self.policy_old.critic(next_states, torch.zeros_like(actions)).squeeze(-1)
             
             # Compute returns and advantages
-            returns = torch.zeros(batch_size, device=self.device)
-            advantages = torch.zeros(batch_size, device=self.device)
+            returns = []
+            advantages = []
             gae = 0
             
             for t in reversed(range(batch_size)):
                 if t == batch_size - 1:
                     next_value = next_values[t]
                 else:
-                    next_value = values[t + 1]
+                    next_value = old_values[t + 1]
                     
-                delta = agent_rewards[t] + self.gamma * next_value * (1 - agent_dones[t]) - values[t]
+                delta = agent_rewards[t] + self.gamma * next_value * (1 - agent_dones[t]) - old_values[t]
                 gae = delta + self.gamma * self.gae_lambda * (1 - agent_dones[t]) * gae
                 
-                returns[t] = gae + values[t]
-                advantages[t] = gae
+                returns.insert(0, gae + old_values[t])
+                advantages.insert(0, gae)
                 
+            returns = torch.tensor(returns).float().to(self.device)
+            advantages = torch.tensor(advantages).float().to(self.device)
+            
             # Normalize advantages
             if self.normalize_advantages:
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        
+
         # Track statistics
         avg_loss = 0
         avg_value_loss = 0
         avg_policy_loss = 0
         avg_entropy = 0
         avg_clip_fraction = 0
+        avg_value_clip_fraction = 0
         avg_approx_kl = 0
-        
+
         # Optimize policy for K epochs
         for _ in range(self.K_epochs):
             # Get current policy distributions
@@ -405,51 +400,70 @@ class PPO:
                 action_mean = self.policy.actor(agent_states)
                 action_var = self.action_var.expand_as(action_mean)
                 dist = torch.distributions.Normal(action_mean, action_var.sqrt())
-                action_logprobs = dist.log_prob(agent_actions).sum(dim=-1)  # Sum across action dimensions
+                action_logprobs = dist.log_prob(agent_actions).sum(dim=-1)
             else:
                 action_probs = self.policy.actor(agent_states)
                 dist = torch.distributions.Categorical(action_probs)
                 action_logprobs = dist.log_prob(agent_actions)
-                
+
             # Get entropy
             dist_entropy = dist.entropy().mean()
+
+            # Get current values
+            values = self.policy.critic(states, actions).squeeze(-1)
+
+            # Value clipping
+            values_clipped = old_values + torch.clamp(
+                values - old_values,
+                -self.eps_clip,
+                self.eps_clip
+            )
             
-            # Get state values from critic
-            state_values = self.policy.critic(states, actions).squeeze(-1)
-            
-            # Calculate ratios and surrogate losses
-            ratios = torch.exp(action_logprobs - old_action_logprobs)  # [batch_size]
-            surr1 = ratios * advantages  # [batch_size]
-            surr2 = torch.clamp(ratios, 1-self.eps_clip, 1+self.eps_clip) * advantages  # [batch_size]
-            
-            # Calculate losses
+            # Calculate value losses with clipping
+            value_loss_unclipped = (values - returns) ** 2
+            value_loss_clipped = (values_clipped - returns) ** 2
+            value_loss = 0.5 * torch.max(value_loss_unclipped, value_loss_clipped).mean()
+
+            # Calculate policy loss with clipping
+            ratios = torch.exp(action_logprobs - old_action_logprobs)
+            surr1 = ratios * advantages
+            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
             policy_loss = -torch.min(surr1, surr2).mean()
-            value_loss = 0.5 * ((returns - state_values) ** 2).mean()
-            entropy_loss = -self.entropy_coef * dist_entropy.mean()
-            
+
+            # Entropy loss
+            entropy_loss = -self.entropy_coef * dist_entropy
+
             # Total loss
-            total_loss = policy_loss + self.value_loss_coef * value_loss + entropy_loss
-            
-            # Update policy
+            total_loss = (
+                policy_loss + 
+                self.value_loss_coef * value_loss + 
+                entropy_loss
+            )
+
+            # Gradient update with separate clipping for actor and critic
             self.optimizer.zero_grad()
             total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+            
+            # Clip gradients separately for actor and critic
+            torch.nn.utils.clip_grad_norm_(self.policy.actor.parameters(), self.max_grad_norm)
+            torch.nn.utils.clip_grad_norm_(self.policy.critic.parameters(), self.max_grad_norm * 0.5)  # Lower clip for critic
+            
             self.optimizer.step()
-            
-            # Calculate clip fraction
-            clip_fraction = ((ratios - 1.0).abs() > self.eps_clip).float().mean()
-            
-            # Calculate approximate KL divergence
+
+            # Calculate metrics
+            clip_fraction = (torch.abs(ratios - 1.0) > self.eps_clip).float().mean()
+            value_clip_fraction = (value_loss_clipped < value_loss_unclipped).float().mean()
             approx_kl = (old_action_logprobs - action_logprobs).mean()
-            
+
             # Accumulate statistics
             avg_loss += total_loss.item()
             avg_value_loss += value_loss.item()
             avg_policy_loss += policy_loss.item()
-            avg_entropy += dist_entropy.mean().item()
+            avg_entropy += dist_entropy.item()
             avg_clip_fraction += clip_fraction.item()
+            avg_value_clip_fraction += value_clip_fraction.item()
             avg_approx_kl += approx_kl.item()
-        
+
         # Return average losses and metrics
         return {
             'total_loss': avg_loss / self.K_epochs,
@@ -457,9 +471,10 @@ class PPO:
             'policy_loss': avg_policy_loss / self.K_epochs,
             'entropy_loss': avg_entropy / self.K_epochs,
             'clip_fraction': avg_clip_fraction / self.K_epochs,
+            'value_clip_fraction': avg_value_clip_fraction / self.K_epochs,
             'approx_kl': avg_approx_kl / self.K_epochs,
-            'mean_value': state_values.mean().item(),
-            'value_std': state_values.std().item(),
+            'mean_value': values.mean().item(),
+            'value_std': values.std().item(),
             'mean_ratio': ratios.mean().item(),
             'mean_advantage': advantages.mean().item()
         }

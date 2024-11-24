@@ -6,8 +6,8 @@ import os
 class EnvConfig:
     """Configuration for the environment settings"""
     env_name: str = "simple_v3"  # Name of the environment to train in
-    max_ep_len: int = 1000       # Maximum steps per episode. Higher = longer episodes, more exploration
-    max_training_timesteps: int = int(5e4)  # Total training steps. Higher = more training time, better convergence
+    max_ep_len: int = 100       # Maximum steps per episode. Higher = longer episodes, more exploration
+    max_training_timesteps: int = int(1e5)  # Total training steps. Higher = more training time, better convergence
     has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
     continuous_actions: bool = True  # Specific flag for PettingZoo environments
 
@@ -26,35 +26,35 @@ class LogConfig:
 @dataclass
 class ActionConfig:
     """Configuration for action space exploration"""
-    action_std: float = 0.6                # Initial action noise. Higher = more exploration
+    action_std: float = 0.7               # Initial action noise. Higher = more exploration
     action_std_decay_rate: float = 0.05    # How quickly to reduce exploration. Higher = faster reduction
     min_action_std: float = 0.1            # Minimum exploration noise. Higher = never fully exploits
-    action_std_decay_freq: int = int(1e4)  # How often to decay exploration. Lower = faster adaptation
+    action_std_decay_freq: int = int(5e3)  # How often to decay exploration. Lower = faster adaptation
 
 @dataclass
 class PPOConfig:
     """Configuration for PPO algorithm parameters"""
-    K_epochs: int = 80          # Policy update iterations. Higher = more stable but slower training
+    K_epochs: int = 60          # Policy update iterations. Higher = more stable but slower training
     eps_clip: float = 0.2       # PPO clipping parameter. Higher = larger policy updates
-    gamma: float = 0.905         # Discount factor. Higher = more emphasis on future rewards
-    gae_lambda: float = 0.93    # GAE parameter. Higher = more emphasis on long-term advantages
+    gamma: float = 0.99         # Discount factor. Higher = more emphasis on future rewards
+    gae_lambda: float = 0.95    # GAE parameter. Higher = more emphasis on long-term advantages
     use_gae: bool = True        # Whether to use Generalized Advantage Estimation
     use_value_clipping: bool = True  # Whether to use value function clipping
     lr_actor: float = 0.0003    # Actor learning rate. Higher = faster learning but potential instability
     lr_critic: float = 0.0003   # Critic learning rate. Higher = faster value estimation but potential instability
-    update_timestep: float = 1  # Number of episodes before updating the policy (example: 4 episodes -> update every 4 * max_ep_len steps -> 4 * 1000 = 4000 steps)
+    update_timestep: float = 4  # Number of episodes before updating the policy (example: 4 episodes -> update every 4 * max_ep_len steps -> 4 * 1000 = 4000 steps)
     entropy_coef: float = 0.01  # Entropy coefficient. Higher = more exploration
     random_seed: Optional[int] = None  # Changed from 0 to None to enable random initialization
     max_grad_norm = 0.5
     policy_loss_coef = 1.0
     value_loss_coef = 0.5
     normalize_advantages = True
-    value_reg_coef: float = 0.01  # Value function regularization coefficient
+    value_reg_coef: float = 0.001  # Value function regularization coefficient
     critic_clip_coef: float = 0.2  # Separate clip coefficient for critic gradients
     use_centralized_critic: bool = True
-    critic_hidden_dim: int = 256
+    critic_hidden_dim: int = 64
     critic_num_layers: int = 2
-    buffer_size: int = int(1e6)  # Added this line - size of replay buffer
+    buffer_size: int = int(1e4)  # Added this line - size of replay buffer
 
 @dataclass
 class Config:
@@ -82,4 +82,4 @@ class TestConfig:
     def __post_init__(self):
         if self.checkpoint_path is None:
             # Default path based on training configuration
-            self.checkpoint_path = "runs/PPO_simple_spread_v3_None_0_fixing_IPPO_20241123_232800"
+            self.checkpoint_path = "runs/PPO_simple_v3_None_0_MAPPO_start_20241124_020515"
