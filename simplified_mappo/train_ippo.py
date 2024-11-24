@@ -14,6 +14,8 @@ import argparse
 import wandb
 import logging
 import traceback
+from utils.visualization import render_env
+import matplotlib.pyplot as plt
 
 def save_config_to_json(cfg: Config, writer_dir: str):
     """
@@ -452,12 +454,16 @@ def train_ippo(
             if (i_episode + 1) % cfg.training.eval_frequency == 0:
                 eval_rewards = []
                 # Run multiple evaluation episodes
-                for _ in range(5):  # Run 5 evaluation episodes
+                for eval_ep in range(5):  # Run 5 evaluation episodes
                     scenario.reset_world(world)
                     eval_ep_reward = 0
                     
+                    # Create figure for visualization if needed
+                    if cfg.training.visualize_eval and eval_ep == 0:  # Only visualize first episode
+                        plt.figure(figsize=(8, 8))
+                    
                     # Run one evaluation episode
-                    for _ in range(cfg.env.episode_length):
+                    for step in range(cfg.env.episode_length):
                         actions = {}
                         for i, agent in enumerate(world.agents):
                             agent_obs = scenario.observation(agent, world)
@@ -467,8 +473,18 @@ def train_ippo(
                             actions[f'agent_{i}'] = action
                             agent.action.u = action  # Set physical action
                         
+                        # Store previous positions for interpolation if visualizing
+                        if cfg.training.visualize_eval and eval_ep == 0:
+                            prev_positions = np.array([agent.state.p_pos.copy() for agent in world.agents])
+                            prev_velocities = np.array([agent.state.p_vel.copy() for agent in world.agents])
+                        
                         # Step world
                         world.step()
+                        
+                        # Visualize if needed
+                        if cfg.training.visualize_eval and eval_ep == 0:
+                            render_env(world)
+                            plt.pause(cfg.training.eval_delay)
                         
                         # Get rewards
                         rewards = {f'agent_{i}': scenario.reward(agent, world) 
@@ -476,6 +492,10 @@ def train_ippo(
                         eval_ep_reward += sum(rewards.values()) / len(rewards)
                     
                     eval_rewards.append(eval_ep_reward)
+                    
+                    # Close visualization for this episode
+                    if cfg.training.visualize_eval and eval_ep == 0:
+                        plt.close()
                 
                 # Calculate average evaluation reward
                 avg_eval_reward = sum(eval_rewards) / len(eval_rewards)

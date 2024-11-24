@@ -6,12 +6,15 @@ import time
 from envs import MPEEnv
 import logging
 import traceback
+import matplotlib.pyplot as plt
+from utils.visualization import render_env
 
 class Runner:
     def __init__(self, env_name, num_agents, seed=1, device='cpu'):
         self.env = MPEEnv("simple_spread", num_agents)
         self.num_agents = num_agents
         self.device = device
+        self.world = self.env.world  # Store reference to world for visualization
         
         # Set random seeds
         torch.manual_seed(seed)
@@ -76,8 +79,6 @@ class Runner:
             
             collection_time = time.time() - collection_start
             mean_reward = np.mean(episode_rewards)
-            #logging.debug(f"Collected {episode_steps} steps in {collection_time:.2f}s. "
-            #             f"Mean reward: {mean_reward:.3f}, Complete episodes: {num_resets}")
             
             return mean_reward
             
@@ -86,7 +87,17 @@ class Runner:
             logging.error(traceback.format_exc())
             raise
 
-    def eval_policy(self, policy, n_episodes=5, eval_episode_length=25):
+    def eval_policy(self, policy, n_episodes=5, eval_episode_length=25, visualize=False, eval_delay=0.25):
+        """
+        Evaluate policy for multiple episodes
+        
+        Args:
+            policy: Policy to evaluate
+            n_episodes: Number of episodes to evaluate
+            eval_episode_length: Maximum length of each episode
+            visualize: Whether to visualize the first evaluation episode
+            eval_delay: Delay between steps during visualization
+        """
         try:
             logging.info("Starting evaluation...")
             eval_start = time.time()
@@ -98,21 +109,66 @@ class Runner:
                 obs = self.env.reset()
                 episode_reward = 0
                 
-                # Run for fixed number of steps instead of waiting for done
+                # Create figure for visualization if needed
+                if visualize and episode == 0:  # Only visualize first episode
+                    plt.figure(figsize=(8, 8))
+                
                 for step in range(eval_episode_length):
                     try:
+                        # Store previous positions for interpolation if visualizing
+                        if visualize and episode == 0:
+                            prev_positions = np.array([agent.state.p_pos.copy() for agent in self.world.agents])
+                            prev_velocities = np.array([agent.state.p_vel.copy() for agent in self.world.agents])
+                        
+                        # Get actions
                         with torch.no_grad():
                             obs_tensor = torch.FloatTensor(np.stack(obs)).to(self.device)
                             actions, _ = policy.get_actions(obs_tensor, deterministic=True)
+                        actions_np = actions.cpu().numpy()
                         
-                        obs, rewards, _, _ = self.env.step(actions.cpu().numpy())
+                        # Step environment
+                        obs, rewards, dones, _ = self.env.step(actions_np)
                         episode_reward += np.mean(rewards)
                         total_steps += 1
                         
+                        # Visualize if needed
+                        if visualize and episode == 0:
+                            # Get new positions after step
+                            new_positions = np.array([agent.state.p_pos.copy() for agent in self.world.agents])
+                            new_velocities = np.array([agent.state.p_vel.copy() for agent in self.world.agents])
+                            
+                            # Interpolate for smooth visualization
+                            n_interp = 10
+                            for i in range(n_interp):
+                                t = i / n_interp
+                                # Linearly interpolate positions and velocities
+                                interp_positions = prev_positions * (1 - t) + new_positions * t
+                                interp_velocities = prev_velocities * (1 - t) + new_velocities * t
+                                
+                                # Update agent states for rendering
+                                for agent_idx, agent in enumerate(self.world.agents):
+                                    agent.state.p_pos = interp_positions[agent_idx]
+                                    agent.state.p_vel = interp_velocities[agent_idx]
+                                
+                                render_env(self.world)
+                                plt.pause(eval_delay / n_interp)
+                            
+                            # Restore final positions and velocities
+                            for agent_idx, agent in enumerate(self.world.agents):
+                                agent.state.p_pos = new_positions[agent_idx]
+                                agent.state.p_vel = new_velocities[agent_idx]
+                        
+                        if all(dones):
+                            break
+                            
                     except Exception as e:
                         logging.error(f"Error in evaluation step: {str(e)}")
                         logging.error(traceback.format_exc())
                         raise
+                
+                # Close visualization for this episode
+                if visualize and episode == 0:
+                    plt.close()
                 
                 eval_rewards.append(episode_reward)
                 logging.debug(f"Eval episode {episode + 1}/{n_episodes} completed: "

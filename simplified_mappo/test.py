@@ -12,6 +12,7 @@ import time
 import matplotlib.pyplot as plt
 from dataclasses import asdict
 import os
+from utils.visualization import render_env
 
 def get_absolute_path(relative_path: str) -> str:
     # Get the directory containing the script
@@ -87,6 +88,10 @@ def test_model(train_cfg: Config, test_cfg: TestConfig):
         scenario.reset_world(world)
         episode_reward = 0
         
+        # Create figure for visualization if rendering is enabled
+        if test_cfg.render:
+            plt.figure(figsize=(8, 8))
+        
         for step in range(train_cfg.env.episode_length):
             # Store previous positions for interpolation
             prev_positions = np.array([agent.state.p_pos.copy() for agent in world.agents])
@@ -148,6 +153,9 @@ def test_model(train_cfg: Config, test_cfg: TestConfig):
                     agent.state.p_pos = new_positions[agent_idx]
                     agent.state.p_vel = new_velocities[agent_idx]
                 
+        if test_cfg.render:
+            plt.close()
+            
         avg_reward = episode_reward / train_cfg.env.episode_length
         episode_rewards.append(avg_reward)
         print(f"Episode {episode + 1}/{test_cfg.num_episodes}, Average Reward: {avg_reward:.2f}")
@@ -158,32 +166,6 @@ def test_model(train_cfg: Config, test_cfg: TestConfig):
     print(f"Std Dev of Rewards: {np.std(episode_rewards):.2f}")
     print(f"Min Reward: {np.min(episode_rewards):.2f}")
     print(f"Max Reward: {np.max(episode_rewards):.2f}")
-
-def render_env(world):
-    """
-    Render the environment using matplotlib
-    """
-    plt.clf()
-    
-    # Plot landmarks
-    landmark_pos = np.array([l.state.p_pos for l in world.landmarks])
-    plt.scatter(landmark_pos[:, 0], landmark_pos[:, 1], c='gray', s=100, label='Landmarks')
-    
-    # Plot agents
-    agent_pos = np.array([a.state.p_pos for a in world.agents])
-    plt.scatter(agent_pos[:, 0], agent_pos[:, 1], c='blue', s=200, label='Agents')
-    
-    # Add velocity arrows
-    for agent in world.agents:
-        plt.arrow(agent.state.p_pos[0], agent.state.p_pos[1],
-                 agent.state.p_vel[0]*0.1, agent.state.p_vel[1]*0.1,
-                 head_width=0.05, head_length=0.05, fc='blue', ec='blue')
-    
-    plt.xlim(-1.5, 1.5)
-    plt.ylim(-1.5, 1.5)
-    plt.legend()
-    plt.grid(True)
-    plt.pause(0.01)
 
 def main():
     parser = argparse.ArgumentParser()

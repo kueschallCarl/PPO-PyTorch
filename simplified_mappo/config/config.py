@@ -61,10 +61,13 @@ class TrainingConfig:
     use_value_clipping: bool = True
     normalize_advantages: bool = True
     num_updates: int = 10
-    eval_frequency: int = 100
+    eval_frequency: int = 250
     action_std_decay_freq: int = 1000
     action_std_decay_rate: float = 0.025
     min_action_std: float = 0.1
+    visualize_eval: bool = True  # Whether to visualize one evaluation episode
+    eval_delay: float = 0.25      # Delay between steps during evaluation visualization
+
 @dataclass
 class Config:
     """Main configuration class"""

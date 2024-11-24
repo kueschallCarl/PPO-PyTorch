@@ -14,6 +14,8 @@ import os
 from config.config import Config
 import numpy as np
 from utils.running_mean_std import RunningMeanStd
+from utils.visualization import render_env
+import matplotlib.pyplot as plt
 
 def train_mappo(cfg: Config):
     # Initialize wandb if enabled
@@ -160,7 +162,11 @@ def train_mappo(cfg: Config):
                 
                 # Evaluate policy
                 if (episode + 1) % cfg.training.eval_frequency == 0:
-                    eval_reward = runner.eval_policy(policy)
+                    eval_reward = runner.eval_policy(
+                        policy, 
+                        visualize=cfg.training.visualize_eval,
+                        eval_delay=cfg.training.eval_delay
+                    )
                     if cfg.log.use_wandb:
                         eval_metrics = {
                             "eval/reward": eval_reward,
