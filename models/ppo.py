@@ -69,15 +69,27 @@ class PPO:
                 actions=actions
             )
             
-            print(f"Debug - select_action logprob shape: {action_logprob.shape}, value: {action_logprob.item()}")
+            #print(f"Debug - select_action logprob shape: {action_logprob.shape}, value: {action_logprob.item()}")
             # Remove batch dimension and convert to numpy
             action = action.squeeze(0).cpu().numpy()
             action = np.clip(action, 0, 1)
             # Squeeze logprob to make it a scalar
             action_logprob = action_logprob.squeeze()
-            return action, action_logprob
+            state_val = state_val.squeeze()
+            return action, action_logprob, state_val
 
-    def update(self, states, actions, rewards, next_states, dones, agent_idx, agent_batch, logprobs=None):
+    def update(
+        self, 
+        states, 
+        actions, 
+        rewards, 
+        next_states, 
+        dones, 
+        agent_idx, 
+        agent_batch, 
+        logprobs=None,
+        values=None
+    ):
         """Update policy using MAPPO algorithm"""
         if self.writer is None:
             print("Warning: No writer available for logging!")
@@ -93,6 +105,16 @@ class PPO:
             'approx_kl': 0
         }
 
+        # Normalize advantages instead of returns
+        if self.normalize_advantages:
+            advantages = agent_batch.advantages
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+        else:
+            advantages = agent_batch.advantages
+
+        # Use unnormalized returns for value loss
+        returns = agent_batch.returns
+        
         # PPO update for K epochs
         for epoch in range(self.K_epochs):
             # Actor update (decentralized)
@@ -120,13 +142,13 @@ class PPO:
             # Critic update (centralized)
             state_values = self.policy.critic(states, actions)
             
-            # Policy loss (decentralized)
-            surr1 = ratios * agent_batch.advantages
-            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * agent_batch.advantages
+            # Use normalized advantages for policy loss
+            surr1 = ratios * advantages
+            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages
             policy_loss = -torch.min(surr1, surr2).mean()
             
-            # Value loss (centralized)
-            value_loss = F.mse_loss(state_values.squeeze(-1), agent_batch.returns)
+            # Use unnormalized returns for value loss
+            value_loss = F.mse_loss(state_values.squeeze(-1), returns)
             
             # Entropy loss
             entropy_loss = -dist_entropy.mean()

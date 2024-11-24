@@ -1,99 +1,74 @@
 from dataclasses import dataclass
-from typing import Optional
 import torch
-import os
-@dataclass
-class EnvConfig:
-    """Configuration for the environment settings"""
-    env_name: str = "simple_v3"  # Name of the environment to train in
-    max_ep_len: int = 100       # Maximum steps per episode. Higher = longer episodes, more exploration
-    max_training_timesteps: int = int(1e5)  # Total training steps. Higher = more training time, better convergence
-    has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
-    continuous_actions: bool = True  # Specific flag for PettingZoo environments
-    seed: int = 42  # Base seed for randomization
-
-@dataclass
-class LogConfig:
-    """Configuration for logging and saving models"""
-    # Higher frequencies = more detailed tracking but slower training
-    print_freq: Optional[int] = None      # How often to print training info
-    log_freq: Optional[int] = None        # How often to log metrics
-    save_model_freq: int = int(5e4)       # How often to save model checkpoints. Higher = fewer saves
-    log_dir: str = "logs/PPO_logs"        # Directory for storing logs
-    model_dir: str = "logs/PPO_preTrained"  # Directory for saving models
-    tensorboard_dir: str = "runs"         # Directory for tensorboard logs
-    run_name: str = "MAPPO_start"   # Identifier for this training run
 
 @dataclass
 class ActionConfig:
-    """Configuration for action space exploration"""
-    action_std: float = 0.7               # Initial action noise. Higher = more exploration
-    action_std_decay_rate: float = 0.05    # How quickly to reduce exploration. Higher = faster reduction
-    min_action_std: float = 0.1            # Minimum exploration noise. Higher = never fully exploits
-    action_std_decay_freq: int = int(5e3)  # How often to decay exploration. Lower = faster adaptation
+    action_std: float = 0.5  # Initial standard deviation for continuous actions
+
+@dataclass
+class EnvConfig:
+    env_name: str = "simple_v3"  # MPE environment name
+    has_continuous_action_space: bool = True  # Whether action space is continuous
+    continuous_actions: bool = True  # For PettingZoo environment initialization
+    max_ep_len: int = 100  # Maximum episode length
+    max_training_timesteps: int = int(1e5)  # Maximum number of training timesteps
+    seed: int = 1  # Random seed
 
 @dataclass
 class PPOConfig:
-    """Configuration for PPO algorithm parameters"""
-    # Training Parameters
-    K_epochs: int = 40         # Policy update iterations. Higher = more stable but slower training
-    update_timestep: int = 4    # Changed from float to int
-    random_seed: Optional[int] = None  # Changed from 0 to None to enable random initialization
-
-    # Clipping and Regularization
-    eps_clip: float = 0.15       # PPO clipping parameter. Higher = larger policy updates
-    critic_clip_coef: float = 0.15  # Separate clip coefficient for critic gradients
-    value_reg_coef: float = 0.001  # Value function regularization coefficient
-
-    # Learning Rates
-    lr_actor: float = 0.0001    # Actor learning rate. Higher = faster learning but potential instability
-    lr_critic: float = 0.0001   # Critic learning rate. Higher = faster value estimation but potential instability
-
-    # Hyperparameters
-    gamma: float = 0.905         # Discount factor. Higher = more emphasis on future rewards
-    gae_lambda: float = 0.93    # GAE parameter. Higher = more emphasis on long-term advantages
-    entropy_coef: float = 0.01  # Entropy coefficient. Higher = more exploration
-
-    # Model Parameters
-    use_gae: bool = True        # Whether to use Generalized Advantage Estimation
-    use_value_clipping: bool = True  # Whether to use value function clipping
-    use_centralized_critic: bool = True
-    critic_hidden_dim: int = 64
-    critic_num_layers: int = 2
-
-    # Buffer Size
-    buffer_size: int = 4096      # Match update_timestep for simplicity
-
-    # Loss Coefficients
-    policy_loss_coef: float = 0.5
-    value_loss_coef: float = 0.5
-    normalize_advantages: bool = True
-    max_grad_norm: float = 0.5
+    # PPO hyperparameters
+    lr_actor: float = 3e-4  # Learning rate for actor
+    lr_critic: float = 1e-3  # Learning rate for critic
+    gamma: float = 0.99  # Discount factor
+    gae_lambda: float = 0.95  # GAE lambda parameter
+    eps_clip: float = 0.2  # PPO clip parameter
+    K_epochs: int = 5  # Number of epochs to update policy
+    
+    # Loss coefficients
+    value_loss_coef: float = 0.5  # Value loss coefficient
+    entropy_coef: float = 0.01  # Entropy coefficient for exploration
+    
+    # Gradient clipping
+    max_grad_norm: float = 0.25  # Changed from 0.5
+    
+    # Buffer and batch settings
+    update_timestep: int = 1024  # Update policy every n timesteps
+    buffer_size: int = 1024  # Size of the replay buffer (should match update_timestep)
+    normalize_advantages: bool = True  # Whether to normalize advantages
 
 @dataclass
-class Config:
-    env: EnvConfig = EnvConfig()
-    log: LogConfig = LogConfig()
-    action: ActionConfig = ActionConfig()
-    ppo: PPOConfig = PPOConfig()
-    device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
+class NetworkConfig:
+    hidden_dim: int = 64  # Hidden dimension for neural networks
+    activation: str = "tanh"  # Activation function
 
-    def __post_init__(self):
-        # Set dependent parameters
-        if self.log.print_freq is None:
-            self.log.print_freq = self.env.max_ep_len * 10
-        if self.log.log_freq is None:
-            self.log.log_freq = self.env.max_ep_len * 2 
+@dataclass
+class LogConfig:
+    # Logging and saving frequencies
+    log_freq: int = 1000  # Log metrics every n timesteps
+    save_model_freq: int = 100000  # Save model every n timesteps
+    tensorboard_dir: str = "runs"  # Directory for tensorboard logs
+    checkpoint_dir: str = "checkpoints"  # Directory for model checkpoints
 
 @dataclass
 class TestConfig:
-    total_test_episodes: int = 100
-    render: bool = True
-    frame_delay: float = 0.001  # Delay between frames when rendering (0.0 for no delay)
-    checkpoint_path: str = None  # Will be set in __post_init__
-    random_seed: int = 0
+    checkpoint_path: str = "checkpoints/latest"  # Path to checkpoint directory
+    total_test_episodes: int = 10  # Number of test episodes
+    render: bool = True  # Whether to render environment
+    frame_delay: float = 0.1  # Delay between frames when rendering
+    random_seed: int = 1  # Random seed for testing
 
+@dataclass
+class Config:
+    # Main configuration class that combines all sub-configs
+    env: EnvConfig = EnvConfig()
+    ppo: PPOConfig = PPOConfig()
+    action: ActionConfig = ActionConfig()
+    network: NetworkConfig = NetworkConfig()
+    log: LogConfig = LogConfig()
+    
+    # Device configuration
+    device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     def __post_init__(self):
-        if self.checkpoint_path is None:
-            # Default path based on training configuration
-            self.checkpoint_path = "runs/PPO_simple_v3_None_0_MAPPO_start_20241124_020515"
+        # Ensure consistency between related parameters
+        self.env.continuous_actions = self.env.has_continuous_action_space

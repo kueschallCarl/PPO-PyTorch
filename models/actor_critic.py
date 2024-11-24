@@ -29,15 +29,16 @@ class CentralizedCritic(nn.Module):
     def __init__(self, state_dim, action_dim, num_agents, hidden_dim=64):
         super(CentralizedCritic, self).__init__()
         
-        # Calculate input dimensions
         self.state_input_dim = state_dim * num_agents
         self.action_input_dim = action_dim * num_agents
         self.full_input_dim = self.state_input_dim + self.action_input_dim
         
         self.network = nn.Sequential(
             nn.Linear(self.full_input_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, 1)
         )

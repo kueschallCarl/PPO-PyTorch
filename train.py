@@ -24,9 +24,12 @@ class MAPPO:
             state_dim=self.state_dim,
             action_dim=self.action_dim,
             num_agents=self.env.num_agents,
-            buffer_size=int(cfg.env.max_ep_len * cfg.ppo.update_timestep),
+            buffer_size=cfg.ppo.buffer_size,
             device=self.device
         )
+        
+        # Track steps since last update
+        self.steps_since_update = 0
         
         # Initialize agents with debug print
         self.agents = []
@@ -56,7 +59,8 @@ class MAPPO:
     def select_actions(self, observations):
         """Select actions for all agents"""
         actions = {}
-        logprobs = {}  # New dictionary for logprobs
+        logprobs = {}
+        state_vals = {}  # New dictionary for state values
         
         # Create global state
         global_states = torch.stack([
@@ -64,25 +68,38 @@ class MAPPO:
             for obs in observations.values()
         ])
         
-        # Initialize previous actions
-        prev_actions = torch.zeros(self.env.num_agents, self.action_dim).to(self.device)
+        # Initialize actions tensor
+        all_actions = torch.zeros(self.env.num_agents, self.action_dim).to(self.device)
         
-        # Select actions for each agent
+        # First pass: collect actions
         for agent_id, obs in observations.items():
             agent_idx = int(agent_id.split('_')[1])
             obs_tensor = torch.FloatTensor(obs).to(self.device)
             
-            action, logprob = self.agents[agent_idx].select_action(
+            action, logprob, _ = self.agents[agent_idx].select_action(
                 state=obs_tensor,
-                actions=prev_actions,
+                actions=all_actions,
                 global_state=global_states
             )
             
             actions[agent_id] = action
-            logprobs[agent_id] = logprob  # Store logprob
-            prev_actions[agent_idx] = torch.FloatTensor(action).to(self.device)
+            logprobs[agent_id] = logprob
+            all_actions[agent_idx] = torch.FloatTensor(action).to(self.device)
+        
+        # Second pass: compute state values with complete action information
+        for agent_id, obs in observations.items():
+            agent_idx = int(agent_id.split('_')[1])
+            obs_tensor = torch.FloatTensor(obs).to(self.device)
             
-        return actions, logprobs
+            _, _, state_val = self.agents[agent_idx].select_action(
+                state=obs_tensor,
+                actions=all_actions,  # Now contains all actions
+                global_state=global_states
+            )
+            
+            state_vals[agent_id] = state_val
+        
+        return actions, logprobs, state_vals
 
     def train(self):
         """Main training loop"""
@@ -104,20 +121,21 @@ class MAPPO:
             observations = self.env.reset(seed=seed)[0]
             
             while True:
-                # Select actions and get logprobs
-                actions, logprobs = self.select_actions(observations)
+                # Select actions and get logprobs and values
+                actions, logprobs, state_vals = self.select_actions(observations)
                 
                 # Environment step
                 next_obs, rewards, terms, truncs, _ = self.env.step(actions)
                 
-                # Store transition with logprobs
+                # Store transition with logprobs and values
                 self.buffer.add(
                     states=observations,
                     actions=actions,
                     rewards=rewards,
                     next_states=next_obs,
                     dones={k: terms[k] or truncs[k] for k in terms},
-                    logprobs=logprobs  # Add logprobs to buffer
+                    logprobs=logprobs,
+                    values=state_vals  # Add state values to buffer
                 )
                 
                 observations = next_obs
@@ -130,9 +148,14 @@ class MAPPO:
                 self.writer.add_scalar('Training/step_reward', step_rewards[-1], time_step)
                 self.writer.add_scalar('Training/buffer_size', self.buffer.size, time_step)
                 
-                if self.buffer.is_ready():
-                    self.update()
-                    self.total_updates += 1
+                self.steps_since_update += 1
+                
+                # Check if it's time to update based on number of steps
+                if self.steps_since_update >= self.cfg.ppo.update_timestep:
+                    if self.buffer.size > 0:  # Only update if we have data
+                        self.update()
+                        self.total_updates += 1
+                    self.steps_since_update = 0  # Reset counter
                 
                 if all(terms.values()) or all(truncs.values()):
                     break
@@ -163,7 +186,7 @@ class MAPPO:
     def update(self):
         """Update all agents"""
         # Get all data from buffer
-        states, actions, rewards, next_states, dones, logprobs = self.buffer.get_all()
+        states, actions, rewards, next_states, dones, logprobs, values = self.buffer.get_all()
         
         # Compute last values for all agents
         with torch.no_grad():
@@ -194,7 +217,8 @@ class MAPPO:
                 dones=dones,
                 agent_idx=agent_idx,
                 agent_batch=agent_batch,
-                logprobs=logprobs
+                logprobs=logprobs,
+                values=values
             )
         
         self.buffer.clear()
