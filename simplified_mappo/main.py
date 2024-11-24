@@ -27,8 +27,10 @@ def main():
     
     # Route to appropriate training function
     if cfg.algorithm == "ippo":
+        print("Training IPPO")
         train_ippo(cfg)
     else:
+        print("Training MAPPO")
         train_mappo(cfg)
 
 if __name__ == "__main__":

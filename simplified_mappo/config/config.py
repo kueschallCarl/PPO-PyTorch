@@ -24,12 +24,11 @@ class LogConfig:
     save_model_freq: int = int(5e4)
     log_dir: str = "logs"
     model_dir: str = "models"
-    tensorboard_dir: str = "runs"
     wandb_project: str = "simplified-mappo-ippo"
     wandb_entity: Optional[str] = None
     run_name: Optional[str] = None
     use_wandb: bool = True
-
+    tensorboard_dir: str = "runs"
 @dataclass
 class BufferConfig:
     """Configuration for replay buffer"""
@@ -74,14 +73,21 @@ class Config:
     buffer: BufferConfig = field(default_factory=BufferConfig)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
-    algorithm: str = "ippo"  # or "mappo"
+    algorithm: str = "mappo"  # or "mappo"
     seed: Optional[int] = None
     device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     def __post_init__(self):
         if self.log.run_name is None:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            self.log.run_name = f"{self.algorithm}_{self.env.env_name}_{timestamp}"
+            seed_str = f"seed{self.seed}" if self.seed is not None else "noseed"
+            self.log.run_name = (
+                f"{self.algorithm}"
+                f"_{self.env.env_name}"
+                f"_{self.env.num_agents}agents"
+                f"_{seed_str}"
+                f"_{timestamp}"
+            )
 
     @classmethod
     def from_args(cls, args):

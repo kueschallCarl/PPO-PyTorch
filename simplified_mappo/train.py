@@ -11,96 +11,9 @@ import wandb
 from dataclasses import asdict, dataclass, field
 from typing import Optional, List
 import os
-
-@dataclass
-class EnvConfig:
-    """Configuration for the environment settings"""
-    env_name: str = "simple_spread"  # Name of the environment to train in
-    num_agents: int = 3              # Number of agents in environment
-    episode_length: int = 25         # Length of each episode
-    max_episodes: int = 1000         # Maximum number of episodes
-    max_training_timesteps: int = int(1e5)  # Total training steps
-    has_continuous_action_space: bool = True
-    continuous_actions: bool = True
-
-@dataclass
-class LogConfig:
-    """Configuration for logging and saving models"""
-    print_freq: Optional[int] = None
-    log_freq: Optional[int] = None
-    save_model_freq: int = int(5e4)
-    log_dir: str = "logs"
-    model_dir: str = "models"
-    tensorboard_dir: str = "runs"
-    wandb_project: str = "simplified-mappo-implementation"
-    wandb_entity: Optional[str] = None
-    run_name: Optional[str] = None
-    use_wandb: bool = True
-
-@dataclass
-class BufferConfig:
-    """Configuration for replay buffer"""
-    size: int = 2048
-    batch_size: int = 64
-    advantage_normalization: bool = True
-
-@dataclass
-class PolicyConfig:
-    """Configuration for policy networks"""
-    hidden_sizes: List[int] = field(default_factory=lambda: [64, 64])
-    activation: str = "tanh"
-    initialization: str = "orthogonal"
-    gain: float = 0.01
-
-@dataclass
-class TrainingConfig:
-    """Shared training parameters"""
-    lr_actor: float = 3e-4
-    lr_critic: float = 3e-4
-    gamma: float = 0.99
-    gae_lambda: float = 0.95
-    clip_ratio: float = 0.2
-    entropy_coef: float = 0.01
-    value_loss_coef: float = 0.5
-    max_grad_norm: float = 0.5
-    use_gae: bool = True
-    normalize_advantages: bool = True
-    num_updates: int = 10
-    eval_frequency: int = 100
-
-@dataclass
-class Config:
-    """Main configuration class"""
-    env: EnvConfig = field(default_factory=EnvConfig)
-    log: LogConfig = field(default_factory=LogConfig)
-    buffer: BufferConfig = field(default_factory=BufferConfig)
-    policy: PolicyConfig = field(default_factory=PolicyConfig)
-    training: TrainingConfig = field(default_factory=TrainingConfig)
-    algorithm: str = "ippo"  # or "mappo"
-    seed: Optional[int] = None
-    device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
-
-    def __post_init__(self):
-        if self.log.run_name is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            self.log.run_name = f"{self.algorithm}_{self.env.env_name}_{timestamp}"
-
-    @classmethod
-    def from_args(cls, args):
-        """Create config from command line arguments"""
-        config = cls()
-        
-        # Update config with any non-None values from args
-        for key, value in vars(args).items():
-            if value is not None:
-                # Handle nested configs
-                if '.' in key:
-                    section, param = key.split('.')
-                    setattr(getattr(config, section), param, value)
-                else:
-                    setattr(config, key, value)
-        
-        return config
+from config.config import Config
+import numpy as np
+from utils.running_mean_std import RunningMeanStd
 
 def train_mappo(cfg: Config):
     # Initialize wandb if enabled
@@ -115,10 +28,10 @@ def train_mappo(cfg: Config):
     # Set up logging
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=logging.INFO,
         format='%(asctime)s [%(levelname)s] %(message)s',
         handlers=[
-            logging.FileHandler(f'training_{timestamp}.log'),
+            logging.FileHandler(os.path.join(cfg.log.log_dir, f'training_{timestamp}.log')),
             logging.StreamHandler()
         ]
     )
@@ -126,9 +39,10 @@ def train_mappo(cfg: Config):
     try:
         logging.info(f"Starting training with config:")
         logging.info(f"Scenario: {cfg.env.env_name}, Agents: {cfg.env.num_agents}")
-        logging.info(f"Episodes: {cfg.env.max_episodes}, Episode length: {cfg.env.episode_length}")
-        logging.info(f"Buffer size: {cfg.buffer.size}, Batch size: {cfg.buffer.batch_size}, LR: {cfg.training.lr_actor}")
-
+        
+        # Initialize global step counter
+        global_step = 0
+        
         # Initialize device
         device = torch.device(cfg.device)
         logging.info(f"Using device: {device}")
@@ -144,7 +58,7 @@ def train_mappo(cfg: Config):
         
         algorithm = MAPPO(
             policy=policy,
-            lr=cfg.training.lr_actor
+            cfg=cfg
         )
         
         # Initialize buffer
@@ -156,70 +70,107 @@ def train_mappo(cfg: Config):
             device=device
         )
         
+        # Initialize reward normalizer
+        reward_normalizer = RunningMeanStd()
+        
         # Training loop
         start_time = time.time()
+        print_running_reward = 0
+        print_running_episodes = 0
+        log_running_reward = 0
+        log_running_episodes = 0
+        
         for episode in range(cfg.env.max_episodes):
             episode_start = time.time()
             
             try:
                 # Collect experience
                 episode_reward = runner.collect_episodes(policy, buffer, cfg.env.episode_length)
+                global_step += cfg.env.episode_length
+                
+                # Update running rewards
+                print_running_reward += episode_reward
+                print_running_episodes += 1
+                log_running_reward += episode_reward
+                log_running_episodes += 1
                 
                 # Track training metrics
-                episode_metrics = {
-                    "train/episode_reward": episode_reward,
-                    "train/episode_duration": time.time() - episode_start,
-                }
+                if cfg.log.use_wandb:
+                    # Environment state
+                    step_metrics = {
+                        "env/episode": episode,
+                        "env/steps_total": global_step,
+                        "env/episode_length": cfg.env.episode_length,
+                        "env/episode_progress": global_step / cfg.env.max_training_timesteps,
+                        
+                        # Reward tracking
+                        "rewards/episode_reward": episode_reward,
+                        "rewards/episode_reward_mean": episode_reward / cfg.env.episode_length,
+                        "rewards/running_mean": reward_normalizer.mean,
+                        "rewards/running_std": reward_normalizer.std,
+                        
+                        # Time tracking
+                        "time/episode_duration": time.time() - episode_start,
+                        "time/total_duration": time.time() - start_time,
+                        
+                        # Training progress
+                        "training/episodes_completed": episode,
+                        "training/total_timesteps": global_step,
+                        "training/completion_percentage": (global_step / cfg.env.max_training_timesteps) * 100,
+                        "training/running_reward": print_running_reward / max(print_running_episodes, 1),
+                        "training/running_length": cfg.env.episode_length,
+                    }
+                    
+                    wandb.log(step_metrics, step=global_step)
                 
                 # Update policy
                 policy_metrics = {}
                 for sample in buffer.get_samples(cfg.buffer.batch_size):
-                    update_info = algorithm.update(sample)
+                    update_info = algorithm.update(sample, global_step)
                     # Aggregate policy update metrics
                     for k, v in update_info.items():
                         if k not in policy_metrics:
                             policy_metrics[k] = []
                         policy_metrics[k].append(v)
                 
-                # Average policy metrics over all updates
-                for k, v in policy_metrics.items():
-                    episode_metrics[f"train/{k}"] = sum(v) / len(v)
+                # Average and log policy metrics
+                if cfg.log.use_wandb:
+                    avg_policy_metrics = {
+                        f"policy/{k}": np.mean(v) for k, v in policy_metrics.items()
+                    }
+                    wandb.log(avg_policy_metrics, step=global_step)
                 
-                # Log to wandb
-                wandb.log(episode_metrics, step=episode)
-                
-                # Log progress
-                episode_duration = time.time() - episode_start
-                if (episode + 1) % 10 == 0:
-                    logging.info(f"Episode {episode + 1}/{cfg.env.max_episodes} completed in {episode_duration:.2f}s. "
-                               f"Reward: {episode_reward:.2f}")
+                # Print progress
+                if (episode + 1) % cfg.log.print_freq == 0:
+                    print_avg_reward = print_running_reward / print_running_episodes
+                    print(f"Episode {episode + 1} \t Steps {global_step} \t Average Reward {print_avg_reward:.2f}")
+                    print_running_reward = 0
+                    print_running_episodes = 0
                 
                 # Evaluate policy
                 if (episode + 1) % cfg.training.eval_frequency == 0:
-                    logging.info("Starting evaluation...")
-                    try:
-                        eval_reward = runner.eval_policy(policy)
+                    eval_reward = runner.eval_policy(policy)
+                    if cfg.log.use_wandb:
                         eval_metrics = {
                             "eval/reward": eval_reward,
                             "eval/reward_diff": eval_reward - episode_reward
                         }
-                        wandb.log(eval_metrics, step=episode)
-                        
-                        logging.info(f"Evaluation at episode {episode + 1}: "
-                                   f"Training reward: {episode_reward:.2f}, "
-                                   f"Eval reward: {eval_reward:.2f}")
-                    except Exception as e:
-                        logging.error(f"Error during evaluation: {str(e)}")
-                        logging.error(traceback.format_exc())
+                        wandb.log(eval_metrics, step=global_step)
             
             except Exception as e:
                 logging.error(f"Error during episode {episode + 1}: {str(e)}")
                 logging.error(traceback.format_exc())
                 continue
 
-        total_time = time.time() - start_time
-        wandb.log({"train/total_time": total_time})
-        logging.info(f"Training completed in {total_time:.2f} seconds")
+        # Log final metrics
+        if cfg.log.use_wandb:
+            wandb.run.summary.update({
+                "training/total_episodes": cfg.env.max_episodes,
+                "training/total_steps": global_step,
+                "training/total_time": time.time() - start_time,
+                "training/final_eval_reward": eval_reward if 'eval_reward' in locals() else None,
+                "training/final_running_reward": log_running_reward / max(log_running_episodes, 1)
+            })
         
     except Exception as e:
         logging.error(f"Fatal error during training: {str(e)}")
@@ -227,4 +178,5 @@ def train_mappo(cfg: Config):
         raise
     
     finally:
-        wandb.finish() 
+        if cfg.log.use_wandb:
+            wandb.finish() 

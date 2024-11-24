@@ -164,13 +164,12 @@ def train_ippo(
         # Save config to JSON
         save_config_to_json(cfg, writer_dir)
 
-        # Initialize agents with the writer
+        # Initialize agents without writer
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         ppo_agents = [
             PPO(state_dim=state_dim,
                 action_dim=action_dim,
-                cfg=cfg,
-                writer=writer)
+                cfg=cfg)
             for _ in range(len(world.agents))
         ]
 

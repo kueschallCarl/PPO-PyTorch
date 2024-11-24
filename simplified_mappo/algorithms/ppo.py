@@ -12,7 +12,7 @@ import wandb
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 class PPO:
-    def __init__(self, state_dim, action_dim, cfg: Config, writer: SummaryWriter = None):
+    def __init__(self, state_dim, action_dim, cfg: Config):
         self.cfg = cfg
         self.has_continuous_action_space = cfg.env.has_continuous_action_space
         
@@ -47,14 +47,6 @@ class PPO:
         ])
 
         self.MseLoss = nn.MSELoss()
-
-        # Use provided writer or create new one
-        self.writer = writer or SummaryWriter(os.path.join(cfg.log.tensorboard_dir, 
-                                        f"{cfg.env.env_name}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"))
-        
-        # Log network graph
-        dummy_state = torch.zeros(1, state_dim).to(cfg.device)
-        self.writer.add_graph(self.policy, dummy_state)
 
         # Initialize step counters
         self.total_steps = 0
@@ -355,41 +347,6 @@ class PPO:
                 
             wandb.log(wandb_logs, step=self.total_steps)
             self.last_log_step = self.total_steps
-
-        # Update tensorboard logs with correct step count
-        self.writer.add_scalar('Loss/total', avg_loss / self.K_epochs, self.total_steps)
-        self.writer.add_scalar('Loss/value', avg_value_loss / self.K_epochs, self.total_steps)
-        self.writer.add_scalar('Loss/policy', avg_policy_loss / self.K_epochs, self.total_steps)
-        self.writer.add_scalar('Policy/entropy', avg_entropy / self.K_epochs, self.total_steps)
-        
-        # Log policy statistics
-        self.writer.add_scalar('Policy/mean_ratio', ratios.mean().item(), self.total_steps)
-        self.writer.add_scalar('Policy/mean_advantage', advantages.mean().item(), self.total_steps)
-        
-        # Log value statistics
-        self.writer.add_scalar('Value/mean_value', state_values.mean().item(), self.total_steps)
-        self.writer.add_scalar('Value/value_std', state_values.std().item(), self.total_steps)
-        
-        # Log histograms
-        self.writer.add_histogram('Policy/action_logprobs', logprobs.detach(), self.total_steps)
-        self.writer.add_histogram('Policy/advantages', advantages.detach(), self.total_steps)
-        self.writer.add_histogram('Value/values', state_values.detach(), self.total_steps)
-        
-        # Log network parameters
-        for name, param in self.policy.named_parameters():
-            self.writer.add_histogram(f'Parameters/{name}', param.data, self.total_steps)
-            if param.grad is not None:
-                self.writer.add_histogram(f'Gradients/{name}', param.grad, self.total_steps)
-
-        # Log value function specific metrics
-        self.writer.add_scalar('Value/mean_value_change', (state_values - old_state_values).abs().mean().item(), self.total_steps)
-        if self.cfg.training.use_value_clipping:
-            self.writer.add_scalar('Value/clipped_fraction', 
-                (value_losses_clipped < value_losses).float().mean().item(), 
-                self.total_steps)
-            self.writer.add_scalar('Value/clipping_threshold', 
-                self.eps_clip, 
-                self.total_steps)
 
         self.policy_old.load_state_dict(self.policy.state_dict())
         self.buffer.clear()
