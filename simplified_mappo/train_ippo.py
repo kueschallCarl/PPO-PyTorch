@@ -67,7 +67,7 @@ def make_env(cfg, render_mode=None):
     Create a Multi-Agent Particle Environment (MPE) using local implementation
     """
     # Get the scenario class from the scenarios
-    scenario = SCENARIOS[cfg.env.env_name.split('_v')[0]]()
+    scenario = SCENARIOS[cfg.env.env_name]()
     
     # Create world
     world = scenario.make_world()

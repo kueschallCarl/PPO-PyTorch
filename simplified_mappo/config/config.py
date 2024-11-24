@@ -5,7 +5,9 @@ import os
 @dataclass
 class EnvConfig:
     """Configuration for the environment settings"""
-    env_name: str = "simple_spread_v3"  # Name of the environment to train in
+    """Possible environments: simple_spread, simple_reference, simple_speaker_listener
+    (without the v3 etc.)"""
+    env_name: str = "simple_spread"  # Name of the environment to train in
     max_ep_len: int = 1000       # Maximum steps per episode. Higher = longer episodes, more exploration
     max_training_timesteps: int = int(1e5)  # Total training steps. Higher = more training time, better convergence
     has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
