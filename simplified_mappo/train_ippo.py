@@ -12,6 +12,9 @@ from envs.mpe.scenarios import SCENARIOS
 import envs.mpe.scenarios as scenarios
 import envs.mpe.core as core
 import argparse
+import wandb
+import logging
+import traceback
 
 def save_config_to_json(cfg: Config, writer_dir: str):
     """
@@ -93,240 +96,370 @@ def train_ippo(
     """
     Train PPO agents using local MPE implementation
     """
-    print("============================================================================================")
-
-    # Create env using local implementation
-    world, state_dim, action_dim, scenario = make_env(cfg, render_mode='human' if render else None)
+    # Initialize final_avg_reward at the start
+    final_avg_reward = 0
     
-    # Set up model saving - create directories if they don't exist
-    if not os.path.exists(cfg.log.model_dir): 
-        os.makedirs(cfg.log.model_dir)
-    model_dir = os.path.join(cfg.log.model_dir, cfg.env.env_name)
-    if not os.path.exists(model_dir): 
-        os.makedirs(model_dir)
-        
-    # Create tensorboard directory if it doesn't exist
-    if not os.path.exists(cfg.log.tensorboard_dir):
-        os.makedirs(cfg.log.tensorboard_dir)
-        
-    # Safely get run number
+    # Initialize wandb if enabled
+    if cfg.log.use_wandb:
+        wandb.init(
+            project=cfg.log.wandb_project,
+            entity=cfg.log.wandb_entity,
+            name=cfg.log.run_name,
+            config=asdict(cfg)
+        )
+
+    # Set up logging
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        handlers=[
+            logging.FileHandler(os.path.join(cfg.log.log_dir, f'training_{timestamp}.log')),
+            logging.StreamHandler()
+        ]
+    )
+
     try:
-        run_num = len([d for d in os.listdir(cfg.log.tensorboard_dir) 
-                      if os.path.isfile(os.path.join(cfg.log.tensorboard_dir, d))])
-    except (FileNotFoundError, StopIteration):
-        run_num = 0
+        print("============================================================================================")
+        logging.info(f"Starting training with config:")
+        logging.info(f"Environment: {cfg.env.env_name}")
+        logging.info(f"Max training timesteps: {cfg.env.max_training_timesteps}")
 
-    # Create writer directory path
-    writer_dir = os.path.join(cfg.log.tensorboard_dir, 
-                           f"PPO_{cfg.env.env_name}_{cfg.seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-    
-    # Create writer directory if it doesn't exist
-    if not os.path.exists(writer_dir):
-        os.makedirs(writer_dir)
+        # Create env using local implementation
+        world, state_dim, action_dim, scenario = make_env(cfg, render_mode='human' if render else None)
         
-    # Create new checkpoint paths for both locations
-    checkpoint_filename = f"PPO_{cfg.env.env_name}_{cfg.log.run_name}_{cfg.seed}_{run_num}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth"
-    model_dir_checkpoint = os.path.join(model_dir, checkpoint_filename)
-    writer_dir_checkpoint = os.path.join(writer_dir, "model.pth")
-    # Create writer
-    writer = SummaryWriter(writer_dir)
-    
-    # Save config to JSON
-    save_config_to_json(cfg, writer_dir)
-
-    # Initialize agents with the writer
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    ppo_agents = [
-        PPO(state_dim=state_dim,
-            action_dim=action_dim,
-            cfg=cfg,
-            writer=writer)
-        for _ in range(len(world.agents))
-    ]
-
-    # Handle model loading for different scenarios
-    if pretrained_path:
-        print(f"Fine-tuning from pretrained models in: {pretrained_path}")
-        # Load pretrained models
-        load_checkpoint(ppo_agents, pretrained_path)
+        # Set up model saving - create directories if they don't exist
+        if not os.path.exists(cfg.log.model_dir): 
+            os.makedirs(cfg.log.model_dir)
+        model_dir = os.path.join(cfg.log.model_dir, cfg.env.env_name)
+        if not os.path.exists(model_dir): 
+            os.makedirs(model_dir)
             
-        # Modify learning rates for fine-tuning
-        for agent in ppo_agents:
-            for param_group in agent.optimizer.param_groups:
-                param_group['lr'] *= 0.1  # Reduce learning rate for fine-tuning
-                
-        print("Loaded pretrained models and adjusted learning rates for fine-tuning")
+        # Create tensorboard directory if it doesn't exist
+        if not os.path.exists(cfg.log.tensorboard_dir):
+            os.makedirs(cfg.log.tensorboard_dir)
+            
+        # Safely get run number
+        try:
+            run_num = len([d for d in os.listdir(cfg.log.tensorboard_dir) 
+                          if os.path.isfile(os.path.join(cfg.log.tensorboard_dir, d))])
+        except (FileNotFoundError, StopIteration):
+            run_num = 0
+
+        # Create writer directory path
+        writer_dir = os.path.join(cfg.log.tensorboard_dir, 
+                               f"PPO_{cfg.env.env_name}_{cfg.seed}_{run_num}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
         
-    elif checkpoint_path:
-        print(f"Resuming training from checkpoint directory: {checkpoint_path}")
-        load_checkpoint(ppo_agents, checkpoint_path)
-        print("Resumed from checkpoint successfully")
-
-    # Set initial random seed if specified
-    if cfg.seed is not None:
-        print("--------------------------------------------------------------------------------------------")
-        print("setting initial random seed to ", cfg.seed)
-        torch.manual_seed(cfg.seed)
-        np.random.seed(cfg.seed)
-    
-    # Logging
-    print("Started training at (GMT) : ", datetime.now().replace(microsecond=0))
-    print("============================================================================================")
-    
-    # Create log file path
-    log_f_name = os.path.join(writer_dir, 'training_log.csv')
-    log_f = open(log_f_name, "w+")
-    log_f.write('episode,timestep,reward\n')
-
-    # Training loop variables
-    time_step = 0
-    i_episode = 0
-    print_running_reward = 0
-    print_running_episodes = 0
-    log_running_reward = 0
-    log_running_episodes = 0
-
-    reward_normalizer = RunningMeanStd()
-    
-    # Start training loop
-    start_time = datetime.now().replace(microsecond=0)
-    while time_step <= cfg.env.max_training_timesteps:
-        episode_seed = np.random.randint(0, 10000)
+        # Create writer directory if it doesn't exist
+        if not os.path.exists(writer_dir):
+            os.makedirs(writer_dir)
+            
+        # Create new checkpoint paths for both locations
+        checkpoint_filename = f"PPO_{cfg.env.env_name}_{cfg.log.run_name}_{cfg.seed}_{run_num}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth"
+        model_dir_checkpoint = os.path.join(model_dir, checkpoint_filename)
+        writer_dir_checkpoint = os.path.join(writer_dir, "model.pth")
+        # Create writer
+        writer = SummaryWriter(writer_dir)
         
-        # Reset world using scenario instance
-        scenario.reset_world(world)
-        observations = {f'agent_{i}': scenario.observation(agent, world) 
-                       for i, agent in enumerate(world.agents)}
-        
-        current_ep_reward = 0
-        current_ep_length = 0
-        
-        while current_ep_length < cfg.env.episode_length:
-            actions = {}
-            
-            # Get actions for each agent
-            for i, agent in enumerate(world.agents):
-                agent_obs = observations[f'agent_{i}']
-                agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
-                action = ppo_agents[i].select_action(agent_state_tensor)
-                
-                if cfg.env.has_continuous_action_space:
-                    action = action.flatten()
-                    agent.action.u = action  # Set physical action
-                else:
-                    action = int(action)
-                    # Would need to convert discrete action to continuous for MPE
-                
-                actions[f'agent_{i}'] = action
-            
-            # Step world
-            world.step()
-            
-            # Get new observations and rewards using scenario instance
-            next_observations = {f'agent_{i}': scenario.observation(agent, world) 
-                               for i, agent in enumerate(world.agents)}
-            rewards = {f'agent_{i}': scenario.reward(agent, world) 
-                      for i, agent in enumerate(world.agents)}
-            
-            # Calculate if episode should terminate
-            # You might want to add your own termination conditions
-            terminations = {f'agent_{i}': False for i in range(len(world.agents))}
-            truncations = {f'agent_{i}': current_ep_length >= cfg.env.episode_length - 1 
-                          for i in range(len(world.agents))}
-            
-            # Calculate average reward across all agents for this step
-            step_reward = sum(rewards.values()) / len(rewards)
-            current_ep_reward += step_reward  # Add average reward
-            
-            # Normalize rewards
-            rewards_array = np.array(list(rewards.values()))
-            reward_normalizer.update(rewards_array)
-            normalized_rewards = reward_normalizer.normalize(rewards_array)
-            
-            # Update buffers with normalized rewards
-            for i, (agent_idx, reward) in enumerate(zip(rewards.keys(), normalized_rewards)):
-                agent = ppo_agents[i]  # Use index directly since it matches the agent order
-                agent.buffer.rewards.append(reward)
-                agent.buffer.is_terminals.append(terminations[agent_idx] or truncations[agent_idx])
+        # Save config to JSON
+        save_config_to_json(cfg, writer_dir)
 
-            observations = next_observations
-            time_step += 1
-            current_ep_length += 1
+        # Initialize agents with the writer
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        ppo_agents = [
+            PPO(state_dim=state_dim,
+                action_dim=action_dim,
+                cfg=cfg,
+                writer=writer)
+            for _ in range(len(world.agents))
+        ]
 
-            if all(terminations.values()) or all(truncations.values()):
-                break
+        # Handle model loading for different scenarios
+        if pretrained_path:
+            print(f"Fine-tuning from pretrained models in: {pretrained_path}")
+            logging.info("Loaded pretrained models and adjusted learning rates for fine-tuning")
+            
+        elif checkpoint_path:
+            print(f"Resuming training from checkpoint directory: {checkpoint_path}")
+            load_checkpoint(ppo_agents, checkpoint_path)
+            print("Resumed from checkpoint successfully")
 
-        # Calculate average episode reward
-        current_ep_reward = current_ep_reward / current_ep_length  # Average over episode length
-        
-        # Update episode rewards list and print progress
-        print_running_reward += current_ep_reward
-        print_running_episodes += 1
-        
-        # Update if its time
-        if time_step % (cfg.env.episode_length * cfg.training.eval_frequency) == 0:
-            for agent in ppo_agents:
-                agent.update()
-
-        # Decay action std if needed
-        if cfg.env.has_continuous_action_space and time_step % cfg.training.action_std_decay_freq == 0:
-            for agent in ppo_agents:
-                agent.decay_action_std(cfg.training.action_std_decay_rate, 
-                                     cfg.training.min_action_std)
-
-        # Log if its time
-        if time_step % cfg.log.log_freq == 0:
-            log_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0
-            log_avg_reward = round(log_avg_reward, 4)
-            log_f.write('{},{},{}\n'.format(i_episode, time_step, log_avg_reward))
-            log_f.flush()
-            log_running_reward = 0
-            log_running_episodes = 0
-
-        # Print if its time
-        if time_step % cfg.log.print_freq == 0:
-            print_avg_reward = print_running_reward / print_running_episodes if print_running_episodes > 0 else 0
-            print_avg_reward = round(print_avg_reward, 2)
-            print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
-                i_episode, time_step, print_avg_reward))
-            print_running_reward = 0
-            print_running_episodes = 0
-
-        # Save model if its time
-        if time_step % cfg.log.save_model_freq == 0:
+        # Set initial random seed if specified
+        if cfg.seed is not None:
             print("--------------------------------------------------------------------------------------------")
-            print("saving model checkpoints...")
-            save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
-            print("models saved at:")
-            print(f"- {model_dir_checkpoint}")
-            print(f"- {writer_dir_checkpoint}")
-            print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
-            print("--------------------------------------------------------------------------------------------")
-
-        # After episode ends, add these lines:
-        episode_avg_reward = current_ep_reward / time_step
-        writer.add_scalar('Training/episode_reward', current_ep_reward, i_episode)
-        writer.add_scalar('Training/episode_length', time_step, i_episode)
-        writer.add_scalar('Training/average_reward', episode_avg_reward, i_episode)
+            print("setting initial random seed to ", cfg.seed)
+            torch.manual_seed(cfg.seed)
+            np.random.seed(cfg.seed)
         
-        if cfg.env.has_continuous_action_space:
-            writer.add_scalar('Policy/action_std', ppo_agents[0].action_std, i_episode)
+        # Logging
+        print("Started training at (GMT) : ", datetime.now().replace(microsecond=0))
+        print("============================================================================================")
+        
+        # Create log file path
+        log_f_name = os.path.join(writer_dir, 'training_log.csv')
+        log_f = open(log_f_name, "w+")
+        log_f.write('episode,timestep,reward\n')
 
-        log_running_reward += current_ep_reward
-        log_running_episodes += 1
-        i_episode += 1
+        # Training loop variables
+        time_step = 0
+        i_episode = 0
+        print_running_reward = 0
+        print_running_episodes = 0
+        log_running_reward = 0
+        log_running_episodes = 0
 
-    final_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0
-    
-    log_f.close()
-    writer.close()
-    
-    # Save final model
-    print("Saving final model...")
-    save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
-    print("Final model saved at:")
-    print(f"- {model_dir_checkpoint}")
-    print(f"- {writer_dir_checkpoint}")
+        reward_normalizer = RunningMeanStd()
+        
+        # Initialize global step counter
+        global_step = 0
+        
+        # Start training loop
+        start_time = datetime.now().replace(microsecond=0)
+        while time_step <= cfg.env.max_training_timesteps:
+            episode_seed = np.random.randint(0, 10000)
+            
+            # Reset world using scenario instance
+            scenario.reset_world(world)
+            observations = {f'agent_{i}': scenario.observation(agent, world) 
+                           for i, agent in enumerate(world.agents)}
+            
+            current_ep_reward = 0
+            current_ep_length = 0
+            
+            while current_ep_length < cfg.env.episode_length:
+                actions = {}
+                
+                # Get actions for each agent
+                for i, agent in enumerate(world.agents):
+                    agent_obs = observations[f'agent_{i}']
+                    agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
+                    action = ppo_agents[i].select_action(agent_state_tensor)
+                    
+                    if cfg.env.has_continuous_action_space:
+                        action = action.flatten()
+                        agent.action.u = action  # Set physical action
+                    else:
+                        action = int(action)
+                        # Would need to convert discrete action to continuous for MPE
+                    
+                    actions[f'agent_{i}'] = action
+                
+                # Step world
+                world.step()
+                
+                # Get new observations and rewards using scenario instance
+                next_observations = {f'agent_{i}': scenario.observation(agent, world) 
+                                   for i, agent in enumerate(world.agents)}
+                rewards = {f'agent_{i}': scenario.reward(agent, world) 
+                          for i, agent in enumerate(world.agents)}
+                
+                # Calculate if episode should terminate
+                # You might want to add your own termination conditions
+                terminations = {f'agent_{i}': False for i in range(len(world.agents))}
+                truncations = {f'agent_{i}': current_ep_length >= cfg.env.episode_length - 1 
+                              for i in range(len(world.agents))}
+                
+                # Calculate average reward across all agents for this step
+                step_reward = sum(rewards.values()) / len(rewards)
+                current_ep_reward += step_reward  # Add average reward
+                
+                # Normalize rewards
+                rewards_array = np.array(list(rewards.values()))
+                reward_normalizer.update(rewards_array)
+                normalized_rewards = reward_normalizer.normalize(rewards_array)
+                
+                # Update buffers with normalized rewards
+                for i, (agent_idx, reward) in enumerate(zip(rewards.keys(), normalized_rewards)):
+                    agent = ppo_agents[i]  # Use index directly since it matches the agent order
+                    agent.buffer.rewards.append(reward)
+                    agent.buffer.is_terminals.append(terminations[agent_idx] or truncations[agent_idx])
+
+                observations = next_observations
+                time_step += 1
+                current_ep_length += 1
+
+                # Update global step counter
+                global_step = time_step  # Use time_step as our global counter
+
+                # Log step metrics to wandb with global step
+                if cfg.log.use_wandb and time_step % cfg.log.log_freq == 0:
+                    step_metrics = {
+                        "training/step_reward": step_reward,
+                        "training/timestep": time_step,
+                        "training/episode": i_episode,
+                    }
+                    wandb.log(step_metrics, step=global_step)
+
+                if all(terminations.values()) or all(truncations.values()):
+                    break
+
+            # Calculate average episode reward
+            current_ep_reward = current_ep_reward / current_ep_length  # Average over episode length
+            
+            # Update episode rewards list and print progress
+            print_running_reward += current_ep_reward
+            print_running_episodes += 1
+            
+            # Update if its time
+            if time_step % (cfg.env.episode_length * cfg.training.eval_frequency) == 0:
+                for agent in ppo_agents:
+                    agent.update()
+
+            # Decay action std if needed
+            if cfg.env.has_continuous_action_space and time_step % cfg.training.action_std_decay_freq == 0:
+                for agent in ppo_agents:
+                    agent.decay_action_std(cfg.training.action_std_decay_rate, 
+                                         cfg.training.min_action_std)
+
+            # Log if its time
+            if time_step % cfg.log.log_freq == 0:
+                log_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0
+                log_avg_reward = round(log_avg_reward, 4)
+                log_f.write('{},{},{}\n'.format(i_episode, time_step, log_avg_reward))
+                log_f.flush()
+                log_running_reward = 0
+                log_running_episodes = 0
+
+            # Print if its time
+            if time_step % cfg.log.print_freq == 0:
+                print_avg_reward = print_running_reward / print_running_episodes if print_running_episodes > 0 else 0
+                print_avg_reward = round(print_avg_reward, 2)
+                print("Episode : {} \t\t Timestep : {} \t\t Average Reward : {}".format(
+                    i_episode, time_step, print_avg_reward))
+                print_running_reward = 0
+                print_running_episodes = 0
+
+            # Save model if its time
+            if time_step % cfg.log.save_model_freq == 0:
+                print("--------------------------------------------------------------------------------------------")
+                print("saving model checkpoints...")
+                save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
+                print("models saved at:")
+                print(f"- {model_dir_checkpoint}")
+                print(f"- {writer_dir_checkpoint}")
+                print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
+                print("--------------------------------------------------------------------------------------------")
+
+            # After episode ends, add these lines:
+            episode_avg_reward = current_ep_reward / time_step
+            writer.add_scalar('Training/episode_reward', current_ep_reward, i_episode)
+            writer.add_scalar('Training/episode_length', time_step, i_episode)
+            writer.add_scalar('Training/average_reward', episode_avg_reward, i_episode)
+            
+            if cfg.env.has_continuous_action_space:
+                writer.add_scalar('Policy/action_std', ppo_agents[0].action_std, i_episode)
+
+            log_running_reward += current_ep_reward
+            log_running_episodes += 1
+            i_episode += 1
+
+            # After episode ends, add wandb logging
+            if cfg.log.use_wandb:
+                # Per-step metrics
+                step_metrics = {
+                    # Environment state
+                    "env/episode_progress": current_ep_length / cfg.env.episode_length,
+                    "env/total_episodes": i_episode,
+                    "env/steps_remaining": cfg.env.max_training_timesteps - time_step,
+                    
+                    # Reward tracking
+                    "rewards/step_reward_raw": step_reward,
+                    "rewards/step_reward_normalized": reward_normalizer.normalize(np.array([step_reward]))[0],
+                    "rewards/running_mean": reward_normalizer.mean,
+                    "rewards/running_std": reward_normalizer.std,
+                    
+                    # Per-agent metrics
+                    **{f"agent_{i}/raw_reward": reward for i, reward in enumerate(rewards.values())},
+                    **{f"agent_{i}/normalized_reward": norm_reward for i, norm_reward in enumerate(normalized_rewards)},
+                    **{f"agent_{i}/buffer_size": len(ppo_agents[i].buffer.rewards) for i in range(len(ppo_agents))},
+                }
+                
+                # Add action statistics for each agent
+                for i, agent in enumerate(ppo_agents):
+                    if cfg.env.has_continuous_action_space:
+                        actions_array = np.array([actions[f'agent_{i}']])
+                        actions_tensor = torch.from_numpy(actions_array)
+                        step_metrics.update({
+                            f"agent_{i}/action_mean": actions_tensor.mean().item(),
+                            f"agent_{i}/action_std": actions_tensor.std().item(),
+                            f"agent_{i}/action_max": actions_tensor.max().item(),
+                            f"agent_{i}/action_min": actions_tensor.min().item(),
+                            f"agent_{i}/current_action_std": agent.action_std,
+                        })
+                
+                wandb.log(step_metrics, step=global_step)
+
+            # After episode ends, update episode metrics:
+            if cfg.log.use_wandb:
+                episode_metrics = {
+                    # Episode statistics
+                    "episode/total_reward": current_ep_reward,
+                    "episode/length": current_ep_length,
+                    "episode/average_reward": current_ep_reward / current_ep_length,
+                    "episode/normalized_reward": reward_normalizer.normalize(np.array([current_ep_reward]))[0],
+                    
+                    # Training progress
+                    "training/episodes_completed": i_episode,
+                    "training/total_timesteps": time_step,
+                    "training/completion_percentage": (time_step / cfg.env.max_training_timesteps) * 100,
+                    
+                    # Running statistics
+                    "training/running_reward": print_running_reward / max(print_running_episodes, 1),
+                    "training/running_length": current_ep_length,
+                    
+                    # Learning rates
+                    **{f"agent_{i}/lr_actor": agent.optimizer.param_groups[0]['lr'] for i, agent in enumerate(ppo_agents)},
+                    **{f"agent_{i}/lr_critic": agent.optimizer.param_groups[1]['lr'] for i, agent in enumerate(ppo_agents)},
+                }
+                
+                wandb.log(episode_metrics, step=global_step)
+
+            # During model saving
+            if time_step % cfg.log.save_model_freq == 0:
+                if cfg.log.use_wandb:
+                    # Log model checkpoints to wandb
+                    for agent_idx, agent in enumerate(ppo_agents):
+                        model_path = model_dir_checkpoint.replace('.pth', f'_agent{agent_idx}.pth')
+                        wandb.save(model_path)
+                        # Use global step in summary
+                        wandb.run.summary[f"agent{agent_idx}_model_step_{global_step}"] = model_path
+
+        # Calculate final average reward
+        final_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0
+        
+        log_f.close()
+        writer.close()
+        
+        # Save final model
+        print("Saving final model...")
+        save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
+        print("Final model saved at:")
+        print(f"- {model_dir_checkpoint}")
+        print(f"- {writer_dir_checkpoint}")
+
+        if return_reward:
+            return final_avg_reward
+
+    except Exception as e:
+        logging.error(f"Error during training: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise
+
+    finally:
+        if cfg.log.use_wandb:
+            # Use final global step in summary
+            wandb.run.summary.update({
+                "final_avg_reward": final_avg_reward,
+                "total_timesteps": global_step,
+                "total_episodes": i_episode if 'i_episode' in locals() else 0
+            })
+            wandb.finish()
+
+        # Safely close files if they exist
+        if 'log_f' in locals() and not log_f.closed:
+            log_f.close()
+        if 'writer' in locals():
+            writer.close()
 
     if return_reward:
         return final_avg_reward

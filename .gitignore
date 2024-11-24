@@ -76,3 +76,5 @@ result.json
 *.db
 tuning_results/ppo_optimization/study.db
 models/__pycache__/ppo.cpython-310.pyc
+
+wandb/

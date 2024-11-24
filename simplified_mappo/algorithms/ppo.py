@@ -7,6 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 import os
 from datetime import datetime
 import numpy as np
+import wandb
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -54,6 +55,11 @@ class PPO:
         # Log network graph
         dummy_state = torch.zeros(1, state_dim).to(cfg.device)
         self.writer.add_graph(self.policy, dummy_state)
+
+        # Initialize step counters
+        self.total_steps = 0
+        self.update_count = 0
+        self.last_log_step = 0  # Add this to track last logged step
 
     def set_action_std(self, new_action_std):
         if self.has_continuous_action_space:
@@ -193,6 +199,12 @@ class PPO:
         
         return advantages, returns
 
+    @staticmethod
+    def safe_std(tensor):
+        if tensor.numel() <= 1:
+            return torch.tensor(0.0)
+        return tensor.std(unbiased=False)  # Use biased std to avoid DoF warning
+
     def update(self):
         old_states = torch.squeeze(torch.stack(self.buffer.states, dim=0)).detach().to(device)
         old_actions = torch.squeeze(torch.stack(self.buffer.actions, dim=0)).detach().to(device)
@@ -281,11 +293,70 @@ class PPO:
             avg_policy_loss += policy_loss.item()
             avg_entropy += dist_entropy.mean().item()
 
-        # Log statistics to tensorboard
+        # Update step counter before logging
         steps = len(self.buffer.rewards)
-        self.total_steps = getattr(self, 'total_steps', 0) + steps
+        self.total_steps += steps
         
-        # Log average losses
+        # Enhanced wandb logging with correct step count
+        if self.cfg.log.use_wandb and self.total_steps > self.last_log_step:
+            wandb_logs = {
+                # Loss metrics
+                "losses/total_loss": avg_loss / self.K_epochs,
+                "losses/value_loss": avg_value_loss / self.K_epochs,
+                "losses/policy_loss": avg_policy_loss / self.K_epochs,
+                "losses/entropy_loss": entropy_loss.item(),
+                "losses/value_reg_loss": value_reg_loss.item(),
+                
+                # Policy metrics
+                "policy/mean_ratio": ratios.mean().item(),
+                "policy/ratio_std": ratios.std().item(),
+                "policy/ratio_max": ratios.max().item(),
+                "policy/ratio_min": ratios.min().item(),
+                "policy/entropy": avg_entropy / self.K_epochs,
+                "policy/mean_logprob": logprobs.mean().item(),
+                "policy/logprob_std": logprobs.std().item(),
+                
+                # Value metrics
+                "values/mean_value": state_values.mean().item(),
+                "values/value_std": state_values.std().item(),
+                "values/value_max": state_values.max().item(),
+                "values/value_min": state_values.min().item(),
+                "values/mean_return": returns.mean().item(),
+                "values/return_std": returns.std().item(),
+                
+                # Advantage metrics
+                "advantages/mean": advantages.mean().item(),
+                "advantages/std": advantages.std().item(),
+                "advantages/max": advantages.max().item(),
+                "advantages/min": advantages.min().item(),
+                
+                # Gradient metrics
+                "gradients/actor_grad_norm": torch.nn.utils.clip_grad_norm_(
+                    self.policy.actor.parameters(), float('inf')).item(),
+                "gradients/critic_grad_norm": torch.nn.utils.clip_grad_norm_(
+                    self.policy.critic.parameters(), float('inf')).item(),
+            }
+            
+            # Add clipping metrics if enabled
+            if self.cfg.training.use_value_clipping:
+                wandb_logs.update({
+                    "values/clipped_fraction": (value_losses_clipped < value_losses).float().mean().item(),
+                    "values/clipping_threshold": self.eps_clip
+                })
+                
+            # Add parameter statistics with safe std calculation
+            for name, param in self.policy.named_parameters():
+                wandb_logs.update({
+                    f"parameters/{name}_mean": param.data.mean().item(),
+                    f"parameters/{name}_std": PPO.safe_std(param.data).item(),
+                    f"parameters/{name}_grad_mean": param.grad.mean().item() if param.grad is not None else 0,
+                    f"parameters/{name}_grad_std": PPO.safe_std(param.grad).item() if param.grad is not None else 0,
+                })
+                
+            wandb.log(wandb_logs, step=self.total_steps)
+            self.last_log_step = self.total_steps
+
+        # Update tensorboard logs with correct step count
         self.writer.add_scalar('Loss/total', avg_loss / self.K_epochs, self.total_steps)
         self.writer.add_scalar('Loss/value', avg_value_loss / self.K_epochs, self.total_steps)
         self.writer.add_scalar('Loss/policy', avg_policy_loss / self.K_epochs, self.total_steps)

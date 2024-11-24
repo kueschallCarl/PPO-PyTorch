@@ -12,7 +12,7 @@ class EnvConfig:
     num_agents: int = 3              # Number of agents in environment
     episode_length: int = 25         # Length of each episode
     max_episodes: int = 1000         # Maximum number of episodes
-    max_training_timesteps: int = int(1e5)  # Total training steps
+    max_training_timesteps: int = int(1e4)  # Total training steps
     has_continuous_action_space: bool = True
     continuous_actions: bool = True
 
@@ -25,7 +25,7 @@ class LogConfig:
     log_dir: str = "logs"
     model_dir: str = "models"
     tensorboard_dir: str = "runs"
-    wandb_project: str = "simplified-mappo-implementation"
+    wandb_project: str = "simplified-mappo-ippo"
     wandb_entity: Optional[str] = None
     run_name: Optional[str] = None
     use_wandb: bool = True
