@@ -56,6 +56,8 @@ class MAPPO:
     def select_actions(self, observations):
         """Select actions for all agents"""
         actions = {}
+        logprobs = {}  # New dictionary for logprobs
+        
         # Create global state
         global_states = torch.stack([
             torch.FloatTensor(obs).to(self.device) 
@@ -70,16 +72,17 @@ class MAPPO:
             agent_idx = int(agent_id.split('_')[1])
             obs_tensor = torch.FloatTensor(obs).to(self.device)
             
-            action = self.agents[agent_idx].select_action(
+            action, logprob = self.agents[agent_idx].select_action(
                 state=obs_tensor,
                 actions=prev_actions,
                 global_state=global_states
             )
             
             actions[agent_id] = action
+            logprobs[agent_id] = logprob  # Store logprob
             prev_actions[agent_idx] = torch.FloatTensor(action).to(self.device)
             
-        return actions
+        return actions, logprobs
 
     def train(self):
         """Main training loop"""
@@ -95,22 +98,26 @@ class MAPPO:
             episode_length = 0
             step_rewards = []
             
-            observations = self.env.reset()[0]
+            # Add random seed for each episode and print it
+            seed = episode + self.cfg.env.seed if hasattr(self.cfg.env, 'seed') else None
+            print(f"Episode {episode} starting with seed: {seed}")
+            observations = self.env.reset(seed=seed)[0]
             
             while True:
-                # Select actions
-                actions = self.select_actions(observations)
+                # Select actions and get logprobs
+                actions, logprobs = self.select_actions(observations)
                 
                 # Environment step
                 next_obs, rewards, terms, truncs, _ = self.env.step(actions)
                 
-                # Store transition
+                # Store transition with logprobs
                 self.buffer.add(
                     states=observations,
                     actions=actions,
                     rewards=rewards,
                     next_states=next_obs,
-                    dones={k: terms[k] or truncs[k] for k in terms}
+                    dones={k: terms[k] or truncs[k] for k in terms},
+                    logprobs=logprobs  # Add logprobs to buffer
                 )
                 
                 observations = next_obs
@@ -156,7 +163,7 @@ class MAPPO:
     def update(self):
         """Update all agents"""
         # Get all data from buffer
-        states, actions, rewards, next_states, dones = self.buffer.get_all()
+        states, actions, rewards, next_states, dones, logprobs = self.buffer.get_all()
         
         # Compute last values for all agents
         with torch.no_grad():
@@ -186,7 +193,8 @@ class MAPPO:
                 next_states=next_states,
                 dones=dones,
                 agent_idx=agent_idx,
-                agent_batch=agent_batch
+                agent_batch=agent_batch,
+                logprobs=logprobs
             )
         
         self.buffer.clear()

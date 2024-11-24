@@ -10,6 +10,7 @@ class EnvConfig:
     max_training_timesteps: int = int(1e5)  # Total training steps. Higher = more training time, better convergence
     has_continuous_action_space: bool = True  # Whether actions are continuous (True) or discrete (False)
     continuous_actions: bool = True  # Specific flag for PettingZoo environments
+    seed: int = 42  # Base seed for randomization
 
 @dataclass
 class LogConfig:
@@ -61,10 +62,10 @@ class PPOConfig:
     critic_num_layers: int = 2
 
     # Buffer Size
-    buffer_size: int = 2048      # Match update_timestep for simplicity
+    buffer_size: int = 4096      # Match update_timestep for simplicity
 
     # Loss Coefficients
-    policy_loss_coef: float = 1.0
+    policy_loss_coef: float = 0.5
     value_loss_coef: float = 0.5
     normalize_advantages: bool = True
     max_grad_norm: float = 0.5

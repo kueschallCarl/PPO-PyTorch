@@ -108,7 +108,9 @@ class SharedReplayBuffer:
             # Store PPO-specific data if provided
             if logprobs is not None:
                 logprob = logprobs[agent_id].to(self.device)
-                assert logprob.dim() == 0, f"Invalid logprob shape: {logprob.shape}"
+                #print(f"Debug - buffer.add logprob before squeeze: {logprob.shape}, value: {logprob}")
+                logprob = logprob.squeeze()
+                #print(f"Debug - buffer.add logprob after squeeze: {logprob.shape}, value: {logprob.item()}")
                 self.logprobs[self.ptr, agent_idx] = logprob
                 
             if values is not None:
@@ -172,7 +174,8 @@ class SharedReplayBuffer:
             self.actions[:self.size],
             self.rewards[:self.size],
             self.next_states[:self.size],
-            self.dones[:self.size]
+            self.dones[:self.size],
+            self.logprobs[:self.size]
         )
         
         # Verify shapes before returning
@@ -181,6 +184,7 @@ class SharedReplayBuffer:
         assert data[2].shape == (self.size, self.num_agents)
         assert data[3].shape == (self.size, self.num_agents, self.state_dim)
         assert data[4].shape == (self.size, self.num_agents)
+        assert data[5].shape == (self.size, self.num_agents)
         
         return data
 

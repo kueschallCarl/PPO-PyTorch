@@ -69,13 +69,15 @@ class PPO:
                 actions=actions
             )
             
+            print(f"Debug - select_action logprob shape: {action_logprob.shape}, value: {action_logprob.item()}")
             # Remove batch dimension and convert to numpy
             action = action.squeeze(0).cpu().numpy()
             action = np.clip(action, 0, 1)
-            return action
+            # Squeeze logprob to make it a scalar
+            action_logprob = action_logprob.squeeze()
+            return action, action_logprob
 
-    def update(self, states, actions, rewards, next_states, dones, agent_idx, agent_batch):
-        #print(f"Updating agent {agent_idx}")
+    def update(self, states, actions, rewards, next_states, dones, agent_idx, agent_batch, logprobs=None):
         """Update policy using MAPPO algorithm"""
         if self.writer is None:
             print("Warning: No writer available for logging!")
@@ -100,26 +102,27 @@ class PPO:
                 action_var = self.policy.action_var.expand_as(action_mean)
                 cov_mat = torch.diag_embed(action_var).to(self.device)
                 dist = MultivariateNormal(action_mean, cov_mat)
-            else:
-                dist = Categorical(action_mean)
                 
-            action_logprobs = dist.log_prob(agent_batch.actions)
-            dist_entropy = dist.entropy()
+                # Debug prints with proper tensor handling
+                print(f"\nDebug - Agent {agent_idx}, Epoch {epoch}:")
+                print(f"Action mean range: {action_mean.min().item():.3f} to {action_mean.max().item():.3f}")
+                print(f"Action var range: {action_var.min().item():.3f} to {action_var.max().item():.3f}")
+                
+                action_logprobs = dist.log_prob(agent_batch.actions)
+                dist_entropy = dist.entropy()
+                ratios = torch.exp(action_logprobs - agent_batch.logprobs.detach())
+                
+                print(f"Raw action logprobs range: {action_logprobs.min().item():.3f} to {action_logprobs.max().item():.3f}")
+                print(f"Old logprobs range: {agent_batch.logprobs.min().item():.3f} to {agent_batch.logprobs.max().item():.3f}")
+                print(f"Ratio range: {ratios.min().item():.3f} to {ratios.max().item():.3f}")
+                print(f"Entropy range: {dist_entropy.min().item():.3f} to {dist_entropy.max().item():.3f}")
             
             # Critic update (centralized)
             state_values = self.policy.critic(states, actions)
             
             # Policy loss (decentralized)
-            ratios = torch.exp(action_logprobs - agent_batch.logprobs.detach())
-            advantages = agent_batch.advantages
-            
-            if self.normalize_advantages:
-                advantages_norm = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-            else:
-                advantages_norm = advantages
-
-            surr1 = ratios * advantages_norm
-            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * advantages_norm
+            surr1 = ratios * agent_batch.advantages
+            surr2 = torch.clamp(ratios, 1 - self.eps_clip, 1 + self.eps_clip) * agent_batch.advantages
             policy_loss = -torch.min(surr1, surr2).mean()
             
             # Value loss (centralized)

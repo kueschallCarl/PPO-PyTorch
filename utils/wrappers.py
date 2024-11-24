@@ -23,5 +23,3 @@ class PettingZooWrapper:
     def render(self):
         """Render the environment"""
         return self.env.render()
-
-    # ... rest of PettingZooWrapper class methods ... 
