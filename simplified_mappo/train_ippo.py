@@ -85,6 +85,33 @@ def make_env(cfg, render_mode=None):
     
     return world, obs_dim, action_dim, scenario
 
+def save_checkpoint(agents, model_dir_checkpoint, writer_dir):
+    """
+    Save agent checkpoints in both locations:
+    - model_dir: Archive location with timestamp
+    - writer_dir: Run directory for easy loading
+    """
+    # Save in model_dir (archive)
+    for agent_idx, agent in enumerate(agents):
+        model_path = model_dir_checkpoint.replace('.pth', f'_agent{agent_idx}.pth')
+        agent.save(model_path)
+    
+    # Save in writer_dir (run directory)
+    for agent_idx, agent in enumerate(agents):
+        writer_path = os.path.join(writer_dir, f'model_agent{agent_idx}.pth')
+        agent.save(writer_path)
+
+def load_checkpoint(agents, checkpoint_dir):
+    """
+    Load agent checkpoints from a run directory
+    checkpoint_dir: path to the run directory containing model_agent{X}.pth files
+    """
+    for agent_idx, agent in enumerate(agents):
+        agent_checkpoint = os.path.join(checkpoint_dir, f'model_agent{agent_idx}.pth')
+        if not os.path.exists(agent_checkpoint):
+            raise FileNotFoundError(f"Model for agent {agent_idx} not found at: {agent_checkpoint}")
+        agent.load(agent_checkpoint)
+
 def train_ippo(
     cfg: Config, 
     return_reward: bool = False, 
@@ -328,15 +355,21 @@ def train_ippo(
                 print_running_episodes = 0
 
             # Save model if its time
-            if time_step % cfg.log.save_model_freq == 0:
+            if global_step % cfg.log.save_model_freq == 0:
                 print("--------------------------------------------------------------------------------------------")
                 print("saving model checkpoints...")
-                save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
-                print("models saved at:")
-                print(f"- {model_dir_checkpoint}")
-                print(f"- {writer_dir_checkpoint}")
+                save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir)
+                print("models saved in:")
+                print(f"- {model_dir}")
+                print(f"- {writer_dir}")
                 print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
                 print("--------------------------------------------------------------------------------------------")
+                
+                if cfg.log.use_wandb:
+                    for agent_idx, agent in enumerate(ppo_agents):
+                        model_path = os.path.join(writer_dir, f'model_agent{agent_idx}.pth')
+                        wandb.save(model_path)
+                        wandb.run.summary[f"agent{agent_idx}_model_step_{global_step}"] = model_path
 
             # After episode ends, add these lines:
             episode_avg_reward = current_ep_reward / time_step
@@ -462,12 +495,18 @@ def train_ippo(
         
         log_f.close()
         
-        # Save final model
-        print("Saving final model...")
-        save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir_checkpoint)
-        print("Final model saved at:")
-        print(f"- {model_dir_checkpoint}")
-        print(f"- {writer_dir_checkpoint}")
+        # Save final models
+        print("Saving final models...")
+        save_checkpoint(ppo_agents, model_dir_checkpoint, writer_dir)
+        print("Final models saved in:")
+        print(f"- {model_dir}")
+        print(f"- {writer_dir}")
+        
+        if cfg.log.use_wandb:
+            for agent_idx, agent in enumerate(ppo_agents):
+                model_path = os.path.join(writer_dir, f'model_agent{agent_idx}.pth')
+                wandb.save(model_path)
+                wandb.run.summary[f"agent{agent_idx}_final_model"] = model_path
 
         if return_reward:
             return final_avg_reward
@@ -493,33 +532,6 @@ def train_ippo(
 
     if return_reward:
         return final_avg_reward
-
-def save_checkpoint(agents, model_dir_checkpoint, writer_dir_checkpoint):
-    """
-    Save agent checkpoints in both locations:
-    - model_dir: Full path with timestamp etc.
-    - writer_dir: Simple 'model_agentX.pth' in the run directory
-    """
-    # Save in model_dir (archive)
-    for agent_idx, agent in enumerate(agents):
-        model_path = model_dir_checkpoint.replace('.pth', f'_agent{agent_idx}.pth')
-        agent.save(model_path)
-    
-    # Save in writer_dir (run directory)
-    for agent_idx, agent in enumerate(agents):
-        writer_path = os.path.join(os.path.dirname(writer_dir_checkpoint), f'model_agent{agent_idx}.pth')
-        agent.save(writer_path)
-
-def load_checkpoint(agents, checkpoint_dir):
-    """
-    Load agent checkpoints from a run directory
-    checkpoint_dir: path to the run directory containing model_agent{X}.pth files
-    """
-    for agent_idx, agent in enumerate(agents):
-        agent_checkpoint = os.path.join(checkpoint_dir, f'model_agent{agent_idx}.pth')
-        if not os.path.exists(agent_checkpoint):
-            raise FileNotFoundError(f"Model for agent {agent_idx} not found at: {agent_checkpoint}")
-        agent.load(agent_checkpoint)
 
     
     

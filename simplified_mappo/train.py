@@ -80,6 +80,17 @@ def train_mappo(cfg: Config):
         log_running_reward = 0
         log_running_episodes = 0
         
+        # Create writer directory path
+        writer_dir = os.path.join(cfg.log.tensorboard_dir, 
+                               f"PPO_{cfg.env.env_name}_{cfg.seed}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        
+        # Create writer directory if it doesn't exist
+        if not os.path.exists(writer_dir):
+            os.makedirs(writer_dir)
+        
+        # Create checkpoint paths
+        model_checkpoint = os.path.join(writer_dir, "model.pth")
+        
         for episode in range(cfg.env.max_episodes):
             episode_start = time.time()
             
@@ -171,6 +182,28 @@ def train_mappo(cfg: Config):
                 "training/final_eval_reward": eval_reward if 'eval_reward' in locals() else None,
                 "training/final_running_reward": log_running_reward / max(log_running_episodes, 1)
             })
+        
+        # Save model periodically
+        if global_step % cfg.log.save_model_freq == 0:
+            print("--------------------------------------------------------------------------------------------")
+            print("saving model checkpoint...")
+            torch.save(policy.state_dict(), model_checkpoint)
+            print("model saved at:", model_checkpoint)
+            print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
+            print("--------------------------------------------------------------------------------------------")
+            
+            if cfg.log.use_wandb:
+                wandb.save(model_checkpoint)
+                wandb.run.summary[f"model_step_{global_step}"] = model_checkpoint
+        
+        # Save final model
+        print("Saving final model...")
+        torch.save(policy.state_dict(), model_checkpoint)
+        print("Final model saved at:", model_checkpoint)
+        
+        if cfg.log.use_wandb:
+            wandb.save(model_checkpoint)
+            wandb.run.summary["final_model"] = model_checkpoint
         
     except Exception as e:
         logging.error(f"Fatal error during training: {str(e)}")

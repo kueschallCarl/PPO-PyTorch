@@ -21,7 +21,7 @@ class LogConfig:
     """Configuration for logging and saving models"""
     print_freq: Optional[int] = 1000
     log_freq: Optional[int] = 1000
-    save_model_freq: int = int(5e4)
+    save_model_freq: int = int(1e4)
     log_dir: str = "logs"
     model_dir: str = "models"
     wandb_project: str = "simplified-mappo-ippo"
@@ -73,21 +73,12 @@ class Config:
     buffer: BufferConfig = field(default_factory=BufferConfig)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
-    algorithm: str = "mappo"  # or "mappo"
+    algorithm: str = "mappo"  # or "ippo"
     seed: Optional[int] = None
     device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
 
     def __post_init__(self):
-        if self.log.run_name is None:
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            seed_str = f"seed{self.seed}" if self.seed is not None else "noseed"
-            self.log.run_name = (
-                f"{self.algorithm}"
-                f"_{self.env.env_name}"
-                f"_{self.env.num_agents}agents"
-                f"_{seed_str}"
-                f"_{timestamp}"
-            )
+        pass
 
     @classmethod
     def from_args(cls, args):
@@ -103,5 +94,17 @@ class Config:
                     setattr(getattr(config, section), param, value)
                 else:
                     setattr(config, key, value)
+        
+        # Generate run_name after all arguments have been processed
+        if config.log.run_name is None:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            seed_str = f"seed{config.seed}" if config.seed is not None else "noseed"
+            config.log.run_name = (
+                f"{config.algorithm}"
+                f"_{config.env.env_name}"
+                f"_{config.env.num_agents}agents"
+                f"_{seed_str}"
+                f"_{timestamp}"
+            )
         
         return config
