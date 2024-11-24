@@ -34,27 +34,40 @@ class ActionConfig:
 @dataclass
 class PPOConfig:
     """Configuration for PPO algorithm parameters"""
-    K_epochs: int = 60          # Policy update iterations. Higher = more stable but slower training
-    eps_clip: float = 0.2       # PPO clipping parameter. Higher = larger policy updates
-    gamma: float = 0.99         # Discount factor. Higher = more emphasis on future rewards
-    gae_lambda: float = 0.95    # GAE parameter. Higher = more emphasis on long-term advantages
+    # Training Parameters
+    K_epochs: int = 40         # Policy update iterations. Higher = more stable but slower training
+    update_timestep: int = 4    # Changed from float to int
+    random_seed: Optional[int] = None  # Changed from 0 to None to enable random initialization
+
+    # Clipping and Regularization
+    eps_clip: float = 0.15       # PPO clipping parameter. Higher = larger policy updates
+    critic_clip_coef: float = 0.15  # Separate clip coefficient for critic gradients
+    value_reg_coef: float = 0.001  # Value function regularization coefficient
+
+    # Learning Rates
+    lr_actor: float = 0.0001    # Actor learning rate. Higher = faster learning but potential instability
+    lr_critic: float = 0.0001   # Critic learning rate. Higher = faster value estimation but potential instability
+
+    # Hyperparameters
+    gamma: float = 0.905         # Discount factor. Higher = more emphasis on future rewards
+    gae_lambda: float = 0.93    # GAE parameter. Higher = more emphasis on long-term advantages
+    entropy_coef: float = 0.01  # Entropy coefficient. Higher = more exploration
+
+    # Model Parameters
     use_gae: bool = True        # Whether to use Generalized Advantage Estimation
     use_value_clipping: bool = True  # Whether to use value function clipping
-    lr_actor: float = 0.0003    # Actor learning rate. Higher = faster learning but potential instability
-    lr_critic: float = 0.0003   # Critic learning rate. Higher = faster value estimation but potential instability
-    update_timestep: float = 4  # Number of episodes before updating the policy (example: 4 episodes -> update every 4 * max_ep_len steps -> 4 * 1000 = 4000 steps)
-    entropy_coef: float = 0.01  # Entropy coefficient. Higher = more exploration
-    random_seed: Optional[int] = None  # Changed from 0 to None to enable random initialization
-    max_grad_norm = 0.5
-    policy_loss_coef = 1.0
-    value_loss_coef = 0.5
-    normalize_advantages = True
-    value_reg_coef: float = 0.001  # Value function regularization coefficient
-    critic_clip_coef: float = 0.2  # Separate clip coefficient for critic gradients
     use_centralized_critic: bool = True
     critic_hidden_dim: int = 64
     critic_num_layers: int = 2
-    buffer_size: int = int(1e4)  # Added this line - size of replay buffer
+
+    # Buffer Size
+    buffer_size: int = 2048      # Match update_timestep for simplicity
+
+    # Loss Coefficients
+    policy_loss_coef: float = 1.0
+    value_loss_coef: float = 0.5
+    normalize_advantages: bool = True
+    max_grad_norm: float = 0.5
 
 @dataclass
 class Config:
