@@ -239,7 +239,14 @@ def train_mappo(cfg: Config):
             print("--------------------------------------------------------------------------------------------")
             
             if cfg.log.use_wandb:
-                wandb.save(model_checkpoint)
+                # Create and log artifact
+                artifact = wandb.Artifact(
+                    name=f"model-{cfg.env.env_name}", 
+                    type="model",
+                    description=f"Model checkpoint at step {global_step}"
+                )
+                artifact.add_file(model_checkpoint)
+                wandb.log_artifact(artifact)
                 wandb.run.summary[f"model_step_{global_step}"] = model_checkpoint
         
         # Save final model
@@ -248,7 +255,14 @@ def train_mappo(cfg: Config):
         print("Final model saved at:", model_checkpoint)
         
         if cfg.log.use_wandb:
-            wandb.save(model_checkpoint)
+            # Create and log final model artifact
+            final_artifact = wandb.Artifact(
+                name=f"model-{cfg.env.env_name}-final", 
+                type="model",
+                description="Final model checkpoint"
+            )
+            final_artifact.add_file(model_checkpoint)
+            wandb.log_artifact(final_artifact)
             wandb.run.summary["final_model"] = model_checkpoint
         
     except Exception as e:

@@ -78,6 +78,20 @@ def train_ippo(cfg: Config):
             ) for _ in range(cfg.env.num_agents)
         ]
         
+        # Create writer directory path
+        writer_dir = os.path.join(cfg.log.tensorboard_dir, 
+                               f"IPPO_{cfg.env.env_name}_{cfg.seed}_{cfg.log.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        
+        # Create writer directory if it doesn't exist
+        if not os.path.exists(writer_dir):
+            os.makedirs(writer_dir)
+        
+        # Create checkpoint paths for each agent
+        model_checkpoints = [
+            os.path.join(writer_dir, f"agent_{i}_model.pth") 
+            for i in range(cfg.env.num_agents)
+        ]
+        
         # Training loop
         start_time = datetime.now()
         print_running_reward = 0
@@ -205,6 +219,23 @@ def train_ippo(cfg: Config):
                 logging.error(traceback.format_exc())
                 continue
         
+        # Save final models
+        print("Saving final models...")
+        for agent_id, (policy, checkpoint_path) in enumerate(zip(policies, model_checkpoints)):
+            torch.save(policy.state_dict(), checkpoint_path)
+            print(f"Agent {agent_id} final model saved at: {checkpoint_path}")
+            
+            if cfg.log.use_wandb:
+                # Create and log artifact for each agent
+                artifact = wandb.Artifact(
+                    name=f"model-{cfg.env.env_name}-agent{agent_id}-final",
+                    type="model",
+                    description=f"Final model checkpoint for agent {agent_id}"
+                )
+                artifact.add_file(checkpoint_path)
+                wandb.log_artifact(artifact)
+                wandb.run.summary[f"final_model_agent_{agent_id}"] = checkpoint_path
+
     except Exception as e:
         logging.error(f"Fatal error during training: {str(e)}")
         logging.error(traceback.format_exc())
