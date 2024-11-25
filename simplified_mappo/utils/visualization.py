@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-def render_env(env, ax=None):
+def render_env(env, ax=None, agent_trails=None):
     """
     Render the environment state using matplotlib
     """
@@ -11,13 +11,25 @@ def render_env(env, ax=None):
     # Access world through env.world
     world = env.world
     
+    # Initialize agent_trails if not provided
+    if agent_trails is None:
+        agent_trails = {f'agent_{i}': [] for i in range(len(world.agents))}
+    
     # Plot landmarks
     landmark_pos = np.array([l.state.p_pos for l in world.landmarks])
     ax.scatter(landmark_pos[:, 0], landmark_pos[:, 1], c='gray', s=100, label='Landmarks')
     
-    # Plot agents
+    # Plot agents and update trails
     agent_pos = np.array([agent.state.p_pos for agent in world.agents])
     agent_vel = np.array([agent.state.p_vel for agent in world.agents])
+    
+    for i, pos in enumerate(agent_pos):
+        # Update trail
+        agent_trails[f'agent_{i}'].append(pos)
+        
+        # Plot trail
+        trail = np.array(agent_trails[f'agent_{i}'])
+        ax.plot(trail[:, 0], trail[:, 1], 'b-', alpha=0.5)
     
     # Plot agent positions
     ax.scatter(agent_pos[:, 0], agent_pos[:, 1], c='blue', s=100, label='Agents')
@@ -47,5 +59,5 @@ def render_env(env, ax=None):
     ax.grid(True)
     ax.legend()
     
-    return ax
+    return ax, agent_trails
     
