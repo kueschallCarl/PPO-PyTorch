@@ -11,7 +11,7 @@ from utils.visualization import render_env
 
 class Runner:
     def __init__(self, env_name, num_agents, seed=1, device='cpu'):
-        self.env = MPEEnv("simple_spread", num_agents)
+        self.env = MPEEnv(env_name, num_agents)
         self.num_agents = num_agents
         self.device = device
         self.world = self.env.world  # Store reference to world for visualization

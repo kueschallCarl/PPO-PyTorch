@@ -9,14 +9,13 @@ class EnvConfig:
     """Configuration for the environment settings"""
     """Possible environments: simple_spread, simple_reference, simple_speaker_listener"""
     env_name: str = "simple"  # Name of the environment to train in
-    num_agents: int = 3              # Number of agents in environment
+    num_agents: int = 1              # Number of agents in environment
     episode_length: int = 100         # Length of each episode
     max_episodes: int = 1000         # Maximum number of episodes
     max_training_timesteps: int = int(1e4)  # Total training steps
     has_continuous_action_space: bool = True
     continuous_actions: bool = True
-    num_landmarks: int = 3
-    num_agents: int = 3
+    num_landmarks: int = 1
 
 @dataclass
 class LogConfig:
