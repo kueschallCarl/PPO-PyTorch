@@ -124,16 +124,26 @@ class RunnerIPPO:
     def eval_policy(self, policies, n_episodes=5, visualize=False, eval_delay=0.05):
         try:
             eval_rewards = []
+            fig = None
+            
+            # Create figure once if visualization is enabled
+            if visualize:
+                fig, ax = plt.subplots()
+                plt.ion()  # Turn on interactive mode
+                logging.debug("Visualization window created")
             
             for episode in range(n_episodes):
                 obs = self.env.reset()
                 episode_reward = 0
                 done = False
+                step_count = 0
+                max_steps = 100  # Add a maximum step limit as safeguard
                 
                 # Initialize agent trails
                 agent_trails = {f'agent_{i}': [] for i in range(self.num_agents)}
                 
-                while not done:
+                while not done and step_count < max_steps:
+                    step_count += 1
                     # Get actions from each policy
                     actions = []
                     for agent_id, policy in enumerate(policies):
@@ -148,11 +158,22 @@ class RunnerIPPO:
                     done = all(dones)
                     
                     if visualize and episode == 0:
+                        ax.clear()  # Clear the previous frame
                         # Update visualization with agent trails
-                        _, agent_trails = render_env(self.env, agent_trails=agent_trails)
+                        _, agent_trails = render_env(self.env, ax=ax, agent_trails=agent_trails)
+                        plt.draw()
                         plt.pause(eval_delay)
                 
+                logging.debug(f"Episode {episode} completed after {step_count} steps, done={done}")
                 eval_rewards.append(episode_reward)
+            
+            # Close the figure after all episodes
+            if visualize and fig is not None:
+                logging.debug("Attempting to close visualization window")
+                plt.ioff()  # Turn off interactive mode
+                plt.close(fig)
+                fig = None
+                logging.debug("Visualization window closed")
             
             return np.mean(eval_rewards)
             
@@ -160,3 +181,10 @@ class RunnerIPPO:
             logging.error(f"Error in eval_policy: {str(e)}")
             logging.error(traceback.format_exc())
             raise
+        
+        finally:
+            # Ensure figure is closed even if an error occurs
+            if visualize and fig is not None:
+                logging.debug("Cleanup: closing visualization window")
+                plt.ioff()
+                plt.close(fig)

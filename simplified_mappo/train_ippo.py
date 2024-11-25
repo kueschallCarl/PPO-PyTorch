@@ -23,6 +23,9 @@ def train_ippo(cfg: Config):
             config=asdict(cfg)
         )
     
+    # Create log directory if it doesn't exist
+    os.makedirs(cfg.log.log_dir, exist_ok=True)
+    
     # Set up logging
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     logging.basicConfig(

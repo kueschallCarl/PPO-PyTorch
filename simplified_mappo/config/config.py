@@ -20,7 +20,7 @@ class EnvConfig:
 @dataclass
 class LogConfig:
     """Configuration for logging and saving models"""
-    print_freq: Optional[int] = 1000
+    print_freq: Optional[int] = 1
     log_freq: Optional[int] = 1000
     save_model_freq: int = int(1e4)
     log_dir: str = "logs"
@@ -81,7 +81,7 @@ class Config:
     buffer: BufferConfig = field(default_factory=BufferConfig)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
-    algorithm: str = "mappo"  # or "ippo"
+    algorithm: str = "ippo"  # or "ippo"
     seed: Optional[int] = None
     device: str = "cuda:0" if torch.cuda.is_available() else "cpu"
 
