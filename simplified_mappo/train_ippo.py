@@ -263,7 +263,7 @@ def train_ippo(
                     agent_obs = observations[f'agent_{i}']
                     agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
                     action = ppo_agents[i].select_action(agent_state_tensor)
-                    
+                    #print(f"Agent: {i} Action: {action}")
                     if cfg.env.has_continuous_action_space:
                         action = action.flatten()
                         agent.action.u = action  # Set physical action

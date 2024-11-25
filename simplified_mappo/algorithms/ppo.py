@@ -63,14 +63,17 @@ class PPO:
 
     def decay_action_std(self, action_std_decay_rate, min_action_std):
         if self.has_continuous_action_space:
-            self.action_std = self.action_std - action_std_decay_rate
-            self.action_std = round(self.action_std, 4)
-            if (self.action_std <= min_action_std):
-                self.action_std = min_action_std
-                print("setting actor output action_std to min_action_std : ", self.action_std)
+            current_std = self.policy.get_action_std().mean().item()
+            new_action_std = max(current_std - action_std_decay_rate, min_action_std)
+            new_action_std = round(new_action_std, 4)
+            
+            if new_action_std <= min_action_std:
+                new_action_std = min_action_std
+                print("setting actor output action_std to min_action_std : ", new_action_std)
             else:
-                print("setting actor output action_std to : ", self.action_std)
-            self.set_action_std(self.action_std)
+                print("setting actor output action_std to : ", new_action_std)
+                
+            self.set_action_std(new_action_std)
         else:
             print("WARNING : Calling PPO::decay_action_std() on discrete action space policy")
 
@@ -92,14 +95,15 @@ class PPO:
                     state = state.unsqueeze(0)
                 
                 if deterministic:
-                    # Use mean action directly without sampling
+                    # Use mean action directly from distribution
                     action_mean = self.policy_old.actor(state)
                     action = action_mean
-                    # We still need state value for logging
                     state_val = self.policy_old.critic(state)
+                    action_logprob = None  # Not needed for deterministic actions
                 else:
                     # Stochastic action selection (training mode)
                     action, action_logprob, state_val = self.policy_old.act(state)
+                    #print(f"Agent: {action}")  # Keep debug print if needed
 
                 # Add checks for NaN values
                 if torch.isnan(action).any():
@@ -115,8 +119,8 @@ class PPO:
 
                 action_np = action.detach().cpu().numpy().flatten()
                 if np.isnan(action_np).any():
-                    action_np = np.nan_to_num(action_np, 0.5)
-                return np.clip(action_np, 0.0, 1.0)
+                    action_np = np.nan_to_num(action_np, 0.0)
+                return np.clip(action_np, -1.0, 1.0)
         else:
             with torch.no_grad():
                 # Handle discrete action case similarly
@@ -307,6 +311,7 @@ class PPO:
                 "policy/entropy": avg_entropy / self.K_epochs,
                 "policy/mean_logprob": logprobs.mean().item(),
                 "policy/logprob_std": logprobs.std().item(),
+                "policy/action_std": self.policy.get_action_std().mean().item(),
                 
                 # Value metrics
                 "values/mean_value": state_values.mean().item(),

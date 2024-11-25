@@ -76,7 +76,7 @@ def train_mappo(cfg: Config):
         reward_normalizer = RunningMeanStd()
         
         # Training loop
-        start_time = time.time()
+        start_time = datetime.now()
         print_running_reward = 0
         print_running_episodes = 0
         log_running_reward = 0
@@ -110,6 +110,7 @@ def train_mappo(cfg: Config):
                 # Track training metrics
                 if cfg.log.use_wandb:
                     # Environment state
+                    elapsed_time = datetime.now() - start_time
                     step_metrics = {
                         "env/episode": episode,
                         "env/steps_total": global_step,
@@ -122,9 +123,9 @@ def train_mappo(cfg: Config):
                         "rewards/running_mean": reward_normalizer.mean,
                         "rewards/running_std": reward_normalizer.std,
                         
-                        # Time tracking
+                        # Time tracking (convert to seconds for logging)
                         "time/episode_duration": time.time() - episode_start,
-                        "time/total_duration": time.time() - start_time,
+                        "time/total_duration": elapsed_time.total_seconds(),
                         
                         # Training progress
                         "training/episodes_completed": episode,
@@ -181,10 +182,11 @@ def train_mappo(cfg: Config):
 
         # Log final metrics
         if cfg.log.use_wandb:
+            elapsed_time = datetime.now() - start_time
             wandb.run.summary.update({
                 "training/total_episodes": cfg.env.max_episodes,
                 "training/total_steps": global_step,
-                "training/total_time": time.time() - start_time,
+                "training/total_time": elapsed_time.total_seconds(),
                 "training/final_eval_reward": eval_reward if 'eval_reward' in locals() else None,
                 "training/final_running_reward": log_running_reward / max(log_running_episodes, 1)
             })
@@ -195,7 +197,7 @@ def train_mappo(cfg: Config):
             print("saving model checkpoint...")
             torch.save(policy.state_dict(), model_checkpoint)
             print("model saved at:", model_checkpoint)
-            print("Elapsed Time  : ", datetime.now().replace(microsecond=0) - start_time)
+            print("Elapsed Time  : ", datetime.now() - start_time)
             print("--------------------------------------------------------------------------------------------")
             
             if cfg.log.use_wandb:
