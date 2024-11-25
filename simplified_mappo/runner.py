@@ -94,53 +94,19 @@ class Runner:
         try:
             logging.info("Starting evaluation...")
             eval_rewards = []
-            position_history = {
-                'agents': [],
-                'landmarks': [],
-                'distances': [],
-                'rewards': [],
-                'actions': []
-            }
+            fig = None
             
             # Create figure once before evaluation starts if visualizing
             if visualize:
                 plt.ion()  # Turn on interactive mode
-                fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
-                lines = []  # Store line objects for updating
-                for agent_idx in range(self.num_agents):
-                    line, = ax2.plot([], [], label=f'Agent {agent_idx}')
-                    lines.append(line)
-                ax2.set_xlabel('Step')
-                ax2.set_ylabel('Distance to Closest Landmark')
-                ax2.legend()
-                ax2.grid(True)
-                plt.tight_layout()
+                fig, ax = plt.subplots(figsize=(8, 8))
             
             for episode in range(n_episodes):
                 obs = self.env.reset()
                 episode_reward = 0
                 
-                # Track positions and metrics only for first episode if visualizing
-                is_tracking = visualize and episode == 0
-                
-                if is_tracking:
-                    # Store initial positions
-                    position_history['agents'].append(
-                        [agent.state.p_pos.copy() for agent in self.env.world.agents]
-                    )
-                    position_history['landmarks'].append(
-                        [l.state.p_pos.copy() for l in self.env.world.landmarks]
-                    )
-                    
-                    # Calculate initial distances
-                    distances = []
-                    for agent in self.env.world.agents:
-                        agent_distances = [
-                            np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
-                            for l in self.env.world.landmarks
-                        ]
-                        distances.append(agent_distances)
-                    position_history['distances'].append(distances)
+                # Initialize agent trails for this episode
+                agent_trails = {f'agent_{i}': [] for i in range(self.num_agents)} if visualize else None
                 
                 for step in range(eval_episode_length):
                     # Get actions
@@ -149,88 +115,35 @@ class Runner:
                         actions, _ = policy.get_actions(obs_tensor, deterministic=True)
                     actions_np = actions.cpu().numpy()
                     
-                    if is_tracking:
-                        # Track actions
-                        for i, action in enumerate(actions_np):
-                            position_history['actions'].append({
-                                f'agent_{i}': {
-                                    'action': action.copy(),
-                                    'position': self.env.world.agents[i].state.p_pos.copy(),
-                                    'velocity': self.env.world.agents[i].state.p_vel.copy()
-                                }
-                            })
-                    
                     # Execute actions
                     next_obs, rewards, dones, info = self.env.step(actions_np)
                     episode_reward += np.mean(rewards)
                     
-                    if is_tracking:
-                        # Track positions and distances after step
-                        position_history['agents'].append(
-                            [agent.state.p_pos.copy() for agent in self.env.world.agents]
-                        )
-                        position_history['landmarks'].append(
-                            [l.state.p_pos.copy() for l in self.env.world.landmarks]
-                        )
-                        
-                        # Calculate distances
-                        distances = []
-                        for agent in self.env.world.agents:
-                            agent_distances = [
-                                np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
-                                for l in self.env.world.landmarks
-                            ]
-                            distances.append(agent_distances)
-                        position_history['distances'].append(distances)
-                        position_history['rewards'].append(rewards)
-                        
-                        # Update visualization
-                        if visualize:
-                            # Clear axes but keep figure
-                            ax1.clear()
-                            
-                            # Update main visualization
-                            render_env(self.env, ax=ax1)
-                            ax1.set_xlim(-1.5, 1.5)
-                            ax1.set_ylim(-1.5, 1.5)
-                            ax1.grid(True)
-                            
-                            # Update distance plot
-                            for agent_idx, line in enumerate(lines):
-                                agent_distances = [d[agent_idx] for d in position_history['distances']]
-                                min_distances = [min(d) for d in agent_distances]
-                                line.set_data(range(len(min_distances)), min_distances)
-                            
-                            # Adjust distance plot limits
-                            ax2.relim()
-                            ax2.autoscale_view()
-                            
-                            # Update title with current step
-                            fig.suptitle(f'Step {step}/{eval_episode_length}')
-                            
-                            # Refresh display
-                            fig.canvas.draw()
-                            fig.canvas.flush_events()
-                            plt.pause(eval_delay)
+                    # Update visualization
+                    if visualize and episode == 0:  # Only visualize first episode
+                        ax.clear()
+                        _, agent_trails = render_env(self.env, ax=ax, agent_trails=agent_trails)
+                        plt.draw()
+                        plt.pause(eval_delay)
                     
                     obs = next_obs
                     if all(dones):
                         break
                 
                 eval_rewards.append(episode_reward)
-                
+            
             # Close visualization
-            if visualize:
-                plt.close(fig)
+            if visualize and fig is not None:
                 plt.ioff()
+                plt.close(fig)
             
             mean_reward = np.mean(eval_rewards)
-            return mean_reward, position_history if visualize else mean_reward
+            return mean_reward
             
         except Exception as e:
             logging.error(f"Error in eval_policy: {str(e)}")
             logging.error(traceback.format_exc())
-            if visualize:
+            if visualize and fig is not None:
                 plt.close(fig)
                 plt.ioff()
             raise
