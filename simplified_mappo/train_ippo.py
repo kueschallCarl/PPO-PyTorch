@@ -17,6 +17,13 @@ import traceback
 from utils.visualization import render_env
 import matplotlib.pyplot as plt
 
+def calculate_movement_angle(velocity):
+    """Calculate angle of movement in degrees from velocity vector"""
+    angle = np.degrees(np.arctan2(velocity[1], velocity[0]))
+    # Convert to 0-360 range
+    angle = (angle + 360) % 360
+    return angle
+
 def save_config_to_json(cfg: Config, writer_dir: str):
     """
     Save config to a JSON file in the same directory as tensorboard logs
@@ -263,13 +270,17 @@ def train_ippo(
                     agent_obs = observations[f'agent_{i}']
                     agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
                     action = ppo_agents[i].select_action(agent_state_tensor)
-                    #print(f"Agent: {i} Action: {action}")
+                    
                     if cfg.env.has_continuous_action_space:
                         action = action.flatten()
                         agent.action.u = action  # Set physical action
+                        
+                        # Print angle for agent_0
+                        if i == 0:
+                            angle = calculate_movement_angle(action)
+                            print(f"Agent 0 movement angle: {angle:.2f}°, Action: {action}")
                     else:
                         action = int(action)
-                        # Would need to convert discrete action to continuous for MPE
                     
                     actions[f'agent_{i}'] = action
                 
@@ -470,8 +481,15 @@ def train_ippo(
                             agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
                             # Use deterministic action selection for evaluation
                             action = ppo_agents[i].select_action(agent_state_tensor, deterministic=True)
+                            action = np.clip(action, -1.0, 1.0)
+                            
+                            # Print angle for agent_0 during evaluation
+                            if i == 0:
+                                angle = calculate_movement_angle(action)
+                                print(f"[EVAL] Agent 0 movement angle: {angle:.2f}°, Action: {action}")
+                            
                             actions[f'agent_{i}'] = action
-                            agent.action.u = action  # Set physical action
+                            agent.action.u = action * world.force_scale  # Set physical action
                         
                         # Store previous positions for interpolation if visualizing
                         if cfg.training.visualize_eval and eval_ep == 0:
@@ -553,6 +571,7 @@ def train_ippo(
     if return_reward:
         return final_avg_reward
 
+    
     
     
     

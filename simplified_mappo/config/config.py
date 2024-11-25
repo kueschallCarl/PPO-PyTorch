@@ -53,7 +53,7 @@ class TrainingConfig:
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_ratio: float = 0.2
-    entropy_coef: float = 0.01
+    entropy_coef: float = 0.02
     value_loss_coef: float = 0.5
     policy_loss_coef: float = 0.5
     max_grad_norm: float = 0.5
@@ -63,10 +63,14 @@ class TrainingConfig:
     num_updates: int = 10
     eval_frequency: int = 100
     action_std_decay_freq: int = 1000
-    action_std_decay_rate: float = 0.025
-    min_action_std: float = 0.1
+    action_std_decay_rate: float = 0.01
+    min_action_std: float = 0.2
     visualize_eval: bool = True  # Whether to visualize one evaluation episode
     eval_delay: float = 0.1      # Delay between steps during evaluation visualization
+    action_std_init: float = 0.6
+    use_action_scaling: bool = True
+    action_scale: float = 3.0
+    exploration_noise: float = 0.1
 
 @dataclass
 class Config:

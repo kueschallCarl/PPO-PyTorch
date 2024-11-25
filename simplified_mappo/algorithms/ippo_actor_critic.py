@@ -39,10 +39,17 @@ class ActorCritic(nn.Module):
             action_mean = self.actor(state)
             std = self.log_std.exp()
             
-            # Use independent Normal distributions
+            # Use independent Normal distributions with proper scaling
             dist = torch.distributions.Normal(action_mean, std)
-            action = dist.sample()
+            
+            # During training, sample from distribution
+            action = dist.rsample()  # Use rsample for reparameterization
+            
+            # Compute log probability with proper scaling
             action_logprob = dist.log_prob(action).sum(-1)
+            
+            # Ensure actions are properly scaled
+            action = torch.tanh(action)  # Squash to [-1, 1]
         else:
             action_probs = self.actor(state)
             dist = Categorical(action_probs)
