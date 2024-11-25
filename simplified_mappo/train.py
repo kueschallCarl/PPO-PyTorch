@@ -184,18 +184,21 @@ def train_mappo(cfg: Config):
                             
                             # Log additional metrics if using wandb
                             if cfg.log.use_wandb:
-                                # Calculate average distances over episode
-                                avg_distances = np.mean([
-                                    [min(agent_distances) for agent_distances in step_distances]
-                                    for step_distances in position_history['distances']
-                                ], axis=0)
+                                eval_metrics = {"eval/reward": eval_reward}
                                 
-                                eval_metrics = {
-                                    "eval/reward": eval_reward,
-                                    **{f"eval/agent_{i}_avg_distance": dist for i, dist in enumerate(avg_distances)},
-                                    "eval/max_distance": np.max([max(d) for d in position_history['distances']]),
-                                    "eval/min_distance": np.min([min(d) for d in position_history['distances']])
-                                }
+                                # Only add distance metrics if position_history exists
+                                if position_history is not None:
+                                    avg_distances = np.mean([
+                                        [min(agent_distances) for agent_distances in step_distances]
+                                        for step_distances in position_history['distances']
+                                    ], axis=0)
+                                    
+                                    eval_metrics.update({
+                                        **{f"eval/agent_{i}_avg_distance": dist for i, dist in enumerate(avg_distances)},
+                                        "eval/max_distance": np.max([max(d) for d in position_history['distances']]),
+                                        "eval/min_distance": np.min([min(d) for d in position_history['distances']])
+                                    })
+                                
                                 wandb.log(eval_metrics, step=global_step)
                         else:
                             eval_reward = runner.eval_policy(
@@ -203,10 +206,7 @@ def train_mappo(cfg: Config):
                                 visualize=False
                             )
                             if cfg.log.use_wandb:
-                                eval_metrics = {
-                                    "eval/reward": eval_reward,
-                                }
-                                wandb.log(eval_metrics, step=global_step)
+                                wandb.log({"eval/reward": eval_reward}, step=global_step)
                                 
                     except Exception as e:
                         logging.error(f"Error during evaluation: {str(e)}")

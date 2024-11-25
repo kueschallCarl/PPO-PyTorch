@@ -11,7 +11,7 @@ class EnvConfig:
     env_name: str = "simple"  # Name of the environment to train in
     num_agents: int = 1              # Number of agents in environment
     episode_length: int = 100         # Length of each episode
-    max_episodes: int = 1000         # Maximum number of episodes
+    max_episodes: int = 100         # Maximum number of episodes
     max_training_timesteps: int = int(1e4)  # Total training steps
     has_continuous_action_space: bool = True
     continuous_actions: bool = True
@@ -62,7 +62,7 @@ class TrainingConfig:
     use_value_clipping: bool = True
     normalize_advantages: bool = True
     num_updates: int = 80
-    eval_frequency: int = 100
+    eval_frequency: int = 50
     action_std_decay_freq: int = 1000
     action_std_decay_rate: float = 0.005
     min_action_std: float = 0.1
