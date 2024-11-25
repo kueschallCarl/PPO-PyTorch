@@ -31,4 +31,4 @@ def render_env(world, ax=None):
     ax.set_ylim(-1.5, 1.5)
     ax.legend()
     ax.grid(True)
-    plt.pause(0.01) 
+    plt.pause(world.dt) 

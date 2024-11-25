@@ -82,7 +82,8 @@ def make_env(cfg, render_mode=None):
     scenario = SCENARIOS[cfg.env.env_name]()
     
     # Create world
-    world = scenario.make_world()
+    world = scenario.make_world(num_agents=cfg.env.num_agents, num_landmarks=cfg.env.num_landmarks, episode_length=cfg.env.episode_length)
+    world.algorithm = cfg.algorithm
     
     # Get dimensions
     obs_dim = len(scenario.observation(world.agents[0], world))
@@ -273,12 +274,14 @@ def train_ippo(
                     
                     if cfg.env.has_continuous_action_space:
                         action = action.flatten()
-                        agent.action.u = action  # Set physical action
+                        # Scale actions properly and apply as force
+                        scaled_action = action * world.force_scale
+                        agent.action.u = scaled_action
                         
                         # Print angle for agent_0
                         if i == 0:
                             angle = calculate_movement_angle(action)
-                            print(f"Agent 0 movement angle: {angle:.2f}°, Action: {action}")
+                            #print(f"Agent 0 movement angle: {angle:.2f}°, Action: {action}")
                     else:
                         action = int(action)
                     

@@ -15,6 +15,8 @@ class EnvConfig:
     max_training_timesteps: int = int(1e4)  # Total training steps
     has_continuous_action_space: bool = True
     continuous_actions: bool = True
+    num_landmarks: int = 3
+    num_agents: int = 3
 
 @dataclass
 class LogConfig:
@@ -50,8 +52,8 @@ class TrainingConfig:
     """Shared training parameters"""
     lr_actor: float = 3e-4
     lr_critic: float = 3e-4
-    gamma: float = 0.99
-    gae_lambda: float = 0.95
+    gamma: float = 0.90
+    gae_lambda: float = 0.93
     clip_ratio: float = 0.2
     entropy_coef: float = 0.02
     value_loss_coef: float = 0.5
@@ -60,16 +62,16 @@ class TrainingConfig:
     use_gae: bool = True
     use_value_clipping: bool = True
     normalize_advantages: bool = True
-    num_updates: int = 10
+    num_updates: int = 80
     eval_frequency: int = 100
     action_std_decay_freq: int = 1000
     action_std_decay_rate: float = 0.01
-    min_action_std: float = 0.2
+    min_action_std: float = 0.1
     visualize_eval: bool = True  # Whether to visualize one evaluation episode
-    eval_delay: float = 0.1      # Delay between steps during evaluation visualization
-    action_std_init: float = 0.6
+    eval_delay: float = 0.05      # Delay between steps during evaluation visualization
+    action_std_init: float = 0.5
     use_action_scaling: bool = True
-    action_scale: float = 3.0
+    action_scale: float = 2.0
     exploration_noise: float = 0.1
 
 @dataclass

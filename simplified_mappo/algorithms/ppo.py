@@ -95,11 +95,10 @@ class PPO:
                     state = state.unsqueeze(0)
                 
                 if deterministic:
-                    # Use mean action directly from distribution
                     action_mean = self.policy_old.actor(state)
-                    action = action_mean
-                    state_val = self.policy_old.critic(state)
-                    action_logprob = None  # Not needed for deterministic actions
+                    # Add small noise even during evaluation
+                    noise = torch.randn_like(action_mean) * 0.1
+                    action = action_mean + noise if not deterministic else action_mean
                 else:
                     # Stochastic action selection (training mode)
                     action, action_logprob, state_val = self.policy_old.act(state)

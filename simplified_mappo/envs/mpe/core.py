@@ -52,11 +52,15 @@ class World(object):
         self.world_length = 25
         self.dt = 0.1  # Add time delta
         self.force_scale = 1.0  # Add force scaling
+        self.damping = 0.95  # Add damping factor
         
     def step(self):
         for agent in self.agents:
-            # physical action
-            agent.state.p_vel = agent.action.u * self.force_scale
+            # Apply damping to maintain some momentum
+            agent.state.p_vel *= self.damping
+            # Then apply new action
+            agent.state.p_vel += agent.action.u * self.force_scale * self.dt
+            agent.state.p_vel = np.clip(agent.state.p_vel, -1.0, 1.0)
             agent.state.p_pos += agent.state.p_vel * self.dt
 
     def get_obs(self, agent):

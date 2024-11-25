@@ -10,6 +10,7 @@ class Scenario(scenario.BaseScenario):
         world.num_agents = num_agents
         world.num_landmarks = num_landmarks
         world.collaborative = True
+        world.algorithm = 'mappo'  # Default to MAPPO, can be overridden
         
         # add agents
         world.agents = [core.Agent() for i in range(world.num_agents)]
@@ -49,10 +50,21 @@ class Scenario(scenario.BaseScenario):
             landmark.state.p_vel = np.zeros(world.dim_p)
 
     def reward(self, agent, world):
-        # Agents are rewarded based on minimum agent distance to each landmark
+        """
+        Compute reward for agent based on whether we're using MAPPO or IPPO
+        """
+        if world.algorithm == 'mappo':
+            return self._mappo_reward(agent, world)
+        else:  # IPPO
+            return self._ippo_reward(agent, world)
+
+    def _mappo_reward(self, agent, world):
+        """Original MAPPO reward calculation"""
         rew = 0
+        # Global reward based on minimum distance of any agent to each landmark
         for l in world.landmarks:
-            dists = [np.sqrt(np.sum(np.square(a.state.p_pos - l.state.p_pos))) for a in world.agents]
+            dists = [np.sqrt(np.sum(np.square(a.state.p_pos - l.state.p_pos))) 
+                    for a in world.agents]
             rew -= min(dists)
 
         # Penalize collisions between agents
@@ -62,7 +74,45 @@ class Scenario(scenario.BaseScenario):
                 dist = np.sqrt(np.sum(np.square(a.state.p_pos - agent.state.p_pos)))
                 if dist < 2 * agent.size:
                     rew -= 1
-                    
+        return rew
+
+    def _ippo_reward(self, agent, world):
+        """IPPO-specific reward calculation"""
+        rew = 0
+        
+        # Individual reward based on this agent's distance to its closest landmark
+        agent_distances = [np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
+                          for l in world.landmarks]
+        closest_dist = min(agent_distances)
+        rew = -closest_dist  # Base reward
+        
+        # Add distance threshold bonus
+        if closest_dist < 0.1:  # Bonus for being very close
+            rew += 1.0
+        
+        # Small penalty for being too far
+        if closest_dist > 1.0:
+            rew -= 0.5
+            
+        # Optional: Very small consideration for other agents' performance
+        # to maintain some coordination
+        other_agents_reward = 0
+        for l in world.landmarks:
+            other_dists = [np.sqrt(np.sum(np.square(a.state.p_pos - l.state.p_pos))) 
+                          for a in world.agents if a is not agent]
+            if other_dists:  # If there are other agents
+                other_agents_reward += -min(other_dists) * 0.05  # Small weight for coordination
+        
+        rew += other_agents_reward
+
+        # Collision penalties (unchanged)
+        if agent.collide:
+            for a in world.agents:
+                if a is agent: continue
+                dist = np.sqrt(np.sum(np.square(a.state.p_pos - agent.state.p_pos)))
+                if dist < 2 * agent.size:
+                    rew -= 1.0
+
         return rew
 
     def observation(self, agent, world):
