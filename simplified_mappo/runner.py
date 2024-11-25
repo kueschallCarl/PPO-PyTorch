@@ -88,41 +88,36 @@ class Runner:
             raise
 
     def eval_policy(self, policy, n_episodes=5, eval_episode_length=25, visualize=False, eval_delay=0.25):
-        """
-        Evaluate policy for multiple episodes
-        """
         try:
             logging.info("Starting evaluation...")
             eval_rewards = []
             fig = None
+            position_history = {'distances': []} if visualize else None
             
             # Create figure once before evaluation starts if visualizing
             if visualize:
-                plt.ion()  # Turn on interactive mode
+                plt.ion()
                 fig, ax = plt.subplots(figsize=(8, 8))
             
             for episode in range(n_episodes):
                 obs = self.env.reset()
                 episode_reward = 0
-                
-                # Initialize agent trails for this episode
                 agent_trails = {f'agent_{i}': [] for i in range(self.num_agents)} if visualize else None
                 
                 for step in range(eval_episode_length):
-                    # Get actions
                     with torch.no_grad():
                         obs_tensor = torch.FloatTensor(np.stack(obs)).to(self.device)
                         actions, _ = policy.get_actions(obs_tensor, deterministic=True)
                     actions_np = actions.cpu().numpy()
                     
-                    # Execute actions
                     next_obs, rewards, dones, info = self.env.step(actions_np)
                     episode_reward += np.mean(rewards)
                     
                     # Update visualization
                     if visualize and episode == 0:  # Only visualize first episode
                         ax.clear()
-                        _, agent_trails = render_env(self.env, ax=ax, agent_trails=agent_trails)
+                        distances, agent_trails = render_env(self.env, ax=ax, agent_trails=agent_trails)
+                        position_history['distances'].append(distances)  # Store distances
                         plt.draw()
                         plt.pause(eval_delay)
                     
@@ -138,7 +133,7 @@ class Runner:
                 plt.close(fig)
             
             mean_reward = np.mean(eval_rewards)
-            return mean_reward
+            return (mean_reward, position_history) if visualize else mean_reward
             
         except Exception as e:
             logging.error(f"Error in eval_policy: {str(e)}")
