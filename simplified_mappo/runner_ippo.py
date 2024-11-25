@@ -125,66 +125,61 @@ class RunnerIPPO:
         try:
             eval_rewards = []
             fig = None
+            position_history = {'distances': []} if visualize else None
             
-            # Create figure once if visualization is enabled
             if visualize:
-                fig, ax = plt.subplots()
-                plt.ion()  # Turn on interactive mode
-                logging.debug("Visualization window created")
+                plt.ion()
+                fig, ax = plt.subplots(figsize=(8, 8))
             
             for episode in range(n_episodes):
                 obs = self.env.reset()
                 episode_reward = 0
                 done = False
                 step_count = 0
-                max_steps = 100  # Add a maximum step limit as safeguard
+                max_steps = 100
                 
                 # Initialize agent trails
-                agent_trails = {f'agent_{i}': [] for i in range(self.num_agents)}
+                agent_trails = {f'agent_{i}': [] for i in range(self.num_agents)} if visualize else None
                 
                 while not done and step_count < max_steps:
                     step_count += 1
-                    # Get actions from each policy
                     actions = []
+                    
                     for agent_id, policy in enumerate(policies):
                         obs_tensor = torch.FloatTensor(obs[agent_id]).unsqueeze(0).to(self.device)
                         with torch.no_grad():
                             action, _ = policy.get_actions(obs_tensor, deterministic=True)
                         actions.append(action.squeeze(0).cpu().numpy())
                     
-                    # Execute actions
-                    obs, rewards, dones, _ = self.env.step(actions)
+                    next_obs, rewards, dones, _ = self.env.step(actions)
                     episode_reward += np.mean(rewards)
                     done = all(dones)
                     
                     if visualize and episode == 0:
-                        ax.clear()  # Clear the previous frame
-                        # Update visualization with agent trails
-                        _, agent_trails = render_env(self.env, ax=ax, agent_trails=agent_trails)
+                        ax.clear()
+                        distances, agent_trails = render_env(self.env, ax=ax, agent_trails=agent_trails)
+                        if distances is not None:
+                            position_history['distances'].append(distances)
                         plt.draw()
                         plt.pause(eval_delay)
+                    
+                    obs = next_obs
                 
-                logging.debug(f"Episode {episode} completed after {step_count} steps, done={done}")
                 eval_rewards.append(episode_reward)
             
-            # Close the figure after all episodes
             if visualize and fig is not None:
-                logging.debug("Attempting to close visualization window")
-                plt.ioff()  # Turn off interactive mode
+                plt.ioff()
                 plt.close(fig)
-                fig = None
-                logging.debug("Visualization window closed")
             
-            return np.mean(eval_rewards)
+            mean_reward = np.mean(eval_rewards)
+            
+            # Return position_history for visualization metrics
+            return mean_reward if not visualize else (mean_reward, position_history)
             
         except Exception as e:
             logging.error(f"Error in eval_policy: {str(e)}")
             logging.error(traceback.format_exc())
-            raise
-        
-        finally:
-            # Ensure figure is closed even if an error occurs
             if visualize and fig is not None:
-                logging.debug("Cleanup: closing visualization window")
-                plt.ioff()
                 plt.close(fig)
+                plt.ioff()
+            raise

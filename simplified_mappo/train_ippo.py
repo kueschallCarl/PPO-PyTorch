@@ -110,21 +110,38 @@ def train_ippo(cfg: Config):
                                 policy_metrics[f"agent_{agent_id}"][k] = []
                             policy_metrics[f"agent_{agent_id}"][k].append(v)
                 
-                # Log metrics
+                # Track training metrics
                 if cfg.log.use_wandb:
-                    metrics = {
+                    elapsed_time = datetime.now() - start_time
+                    step_metrics = {
+                        # Environment state
                         "env/episode": episode,
                         "env/steps_total": global_step,
-                        "env/episode_reward": episode_reward,
+                        "env/episode_length": cfg.env.episode_length,
+                        "env/episode_progress": global_step / cfg.env.max_training_timesteps,
+                        
+                        # Reward tracking
+                        "rewards/episode_reward": episode_reward,
+                        "rewards/episode_reward_mean": episode_reward / cfg.env.episode_length,
+                        
+                        # Time tracking
                         "time/episode_duration": time.time() - episode_start,
+                        "time/total_duration": elapsed_time.total_seconds(),
+                        
+                        # Training progress
+                        "training/episodes_completed": episode,
+                        "training/total_timesteps": global_step,
+                        "training/completion_percentage": (global_step / cfg.env.max_training_timesteps) * 100,
+                        "training/running_reward": print_running_reward / max(print_running_episodes, 1),
+                        "training/running_length": cfg.env.episode_length,
                     }
                     
-                    # Add policy metrics
+                    # Add per-agent policy metrics
                     for agent_id in range(cfg.env.num_agents):
                         for k, v in policy_metrics[f"agent_{agent_id}"].items():
-                            metrics[f"agent_{agent_id}/{k}"] = np.mean(v)
+                            step_metrics[f"policy/agent_{agent_id}/{k}"] = np.mean(v)
                     
-                    wandb.log(metrics, step=global_step)
+                    wandb.log(step_metrics, step=global_step)
                 
                 # Print progress
                 if (episode + 1) % cfg.log.print_freq == 0:
@@ -135,14 +152,53 @@ def train_ippo(cfg: Config):
                 
                 # Evaluate policies
                 if (episode + 1) % cfg.training.eval_frequency == 0:
-                    eval_reward = runner.eval_policy(
-                        policies,
-                        visualize=cfg.training.visualize_eval,
-                        eval_delay=cfg.training.eval_delay
-                    )
-                    
-                    if cfg.log.use_wandb:
-                        wandb.log({"eval/reward": eval_reward}, step=global_step)
+                    try:
+                        if cfg.training.visualize_eval:
+                            try:
+                                eval_reward, position_history = runner.eval_policy(
+                                    policies,
+                                    visualize=True,
+                                    eval_delay=cfg.training.eval_delay
+                                )
+                            except Exception as e:
+                                logging.error(f"Visualization failed: {str(e)}")
+                                # Fallback to non-visual evaluation
+                                eval_reward = runner.eval_policy(
+                                    policies,
+                                    visualize=False
+                                )
+                                position_history = None
+                            
+                            # Log evaluation metrics
+                            if cfg.log.use_wandb:
+                                eval_metrics = {"eval/reward": eval_reward}
+                                
+                                # Add distance metrics if position_history exists
+                                if position_history is not None:
+                                    avg_distances = np.mean([
+                                        [min(agent_distances) for agent_distances in step_distances]
+                                        for step_distances in position_history['distances']
+                                    ], axis=0)
+                                    
+                                    eval_metrics.update({
+                                        **{f"eval/agent_{i}_avg_distance": dist for i, dist in enumerate(avg_distances)},
+                                        "eval/max_distance": np.max([max(d) for d in position_history['distances']]),
+                                        "eval/min_distance": np.min([min(d) for d in position_history['distances']])
+                                    })
+                                
+                                wandb.log(eval_metrics, step=global_step)
+                        else:
+                            eval_reward = runner.eval_policy(
+                                policies,
+                                visualize=False
+                            )
+                            if cfg.log.use_wandb:
+                                wandb.log({"eval/reward": eval_reward}, step=global_step)
+                                
+                    except Exception as e:
+                        logging.error(f"Error during evaluation: {str(e)}")
+                        logging.error(traceback.format_exc())
+                        continue
             
             except Exception as e:
                 logging.error(f"Error during episode {episode + 1}: {str(e)}")
