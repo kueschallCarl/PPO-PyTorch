@@ -10,8 +10,8 @@ class EnvConfig:
     """Possible environments: simple_spread, simple_reference, simple_speaker_listener"""
     env_name: str = "simple"  # Name of the environment to train in
     num_agents: int = 1              # Number of agents in environment
-    episode_length: int = 100         # Length of each episode
-    max_episodes: int = 100         # Maximum number of episodes
+    episode_length: int = 64         # Length of each episode
+    max_episodes: int = 500        # Maximum number of episodes
     max_training_timesteps: int = int(1e4)  # Total training steps
     has_continuous_action_space: bool = True
     continuous_actions: bool = True
@@ -20,7 +20,7 @@ class EnvConfig:
 @dataclass
 class LogConfig:
     """Configuration for logging and saving models"""
-    print_freq: Optional[int] = 1
+    print_freq: Optional[int] = 5
     log_freq: Optional[int] = 1000
     save_model_freq: int = int(1e4)
     log_dir: str = "logs"
@@ -49,6 +49,8 @@ class PolicyConfig:
 @dataclass
 class TrainingConfig:
     """Shared training parameters"""
+    eval_frequency: int = 250
+
     lr_actor: float = 3e-4
     lr_critic: float = 3e-4
     gamma: float = 0.90
@@ -62,7 +64,6 @@ class TrainingConfig:
     use_value_clipping: bool = True
     normalize_advantages: bool = True
     num_updates: int = 80
-    eval_frequency: int = 50
     action_std_decay_freq: int = 1000
     action_std_decay_rate: float = 0.005
     min_action_std: float = 0.1

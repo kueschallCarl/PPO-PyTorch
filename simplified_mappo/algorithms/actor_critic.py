@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import logging
 
 class MLPLayer(nn.Module):
     def __init__(self, input_dim, hidden_size, layer_N):
@@ -32,10 +33,19 @@ class MLPPolicy(nn.Module):
     def get_actions(self, obs, deterministic=False):
         action_mean = self.actor(obs)
         
+        # Log the action_mean to check for NaN values
+        if torch.isnan(action_mean).any():
+            logging.error(f"NaN detected in action_mean: {action_mean}")
+
         if deterministic:
             return action_mean, None  # Return None for log_probs in deterministic mode
         
         std = self.log_std.exp()
+        
+        # Log the std to check for NaN values
+        if torch.isnan(std).any():
+            logging.error(f"NaN detected in std: {std}")
+
         dist = torch.distributions.Normal(action_mean, std)
         actions = dist.sample()
         action_log_probs = dist.log_prob(actions).sum(-1, keepdim=True)
