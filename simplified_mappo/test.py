@@ -1,7 +1,7 @@
 import json
 import torch
 import numpy as np
-from algorithms.ppo import PPO
+from simplified_mappo.algorithms.ippo import PPO
 from algorithms.mappo import MAPPO
 from algorithms.actor_critic import MLPPolicy
 from config.config import Config
