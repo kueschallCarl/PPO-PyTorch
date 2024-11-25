@@ -126,18 +126,18 @@ class Runner:
                 if is_tracking:
                     # Store initial positions
                     position_history['agents'].append(
-                        [agent.state.p_pos.copy() for agent in self.world.agents]
+                        [agent.state.p_pos.copy() for agent in self.env.world.agents]
                     )
                     position_history['landmarks'].append(
-                        [l.state.p_pos.copy() for l in self.world.landmarks]
+                        [l.state.p_pos.copy() for l in self.env.world.landmarks]
                     )
                     
                     # Calculate initial distances
                     distances = []
-                    for agent in self.world.agents:
+                    for agent in self.env.world.agents:
                         agent_distances = [
                             np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
-                            for l in self.world.landmarks
+                            for l in self.env.world.landmarks
                         ]
                         distances.append(agent_distances)
                     position_history['distances'].append(distances)
@@ -155,8 +155,8 @@ class Runner:
                             position_history['actions'].append({
                                 f'agent_{i}': {
                                     'action': action.copy(),
-                                    'position': self.world.agents[i].state.p_pos.copy(),
-                                    'velocity': self.world.agents[i].state.p_vel.copy()
+                                    'position': self.env.world.agents[i].state.p_pos.copy(),
+                                    'velocity': self.env.world.agents[i].state.p_vel.copy()
                                 }
                             })
                     
@@ -167,18 +167,18 @@ class Runner:
                     if is_tracking:
                         # Track positions and distances after step
                         position_history['agents'].append(
-                            [agent.state.p_pos.copy() for agent in self.world.agents]
+                            [agent.state.p_pos.copy() for agent in self.env.world.agents]
                         )
                         position_history['landmarks'].append(
-                            [l.state.p_pos.copy() for l in self.world.landmarks]
+                            [l.state.p_pos.copy() for l in self.env.world.landmarks]
                         )
                         
                         # Calculate distances
                         distances = []
-                        for agent in self.world.agents:
+                        for agent in self.env.world.agents:
                             agent_distances = [
                                 np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
-                                for l in self.world.landmarks
+                                for l in self.env.world.landmarks
                             ]
                             distances.append(agent_distances)
                         position_history['distances'].append(distances)
@@ -190,7 +190,7 @@ class Runner:
                             ax1.clear()
                             
                             # Update main visualization
-                            render_env(self.world, ax=ax1)
+                            render_env(self.env, ax=ax1)
                             ax1.set_xlim(-1.5, 1.5)
                             ax1.set_ylim(-1.5, 1.5)
                             ax1.grid(True)

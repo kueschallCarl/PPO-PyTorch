@@ -165,12 +165,22 @@ def train_mappo(cfg: Config):
                 if (episode + 1) % cfg.training.eval_frequency == 0:
                     try:
                         if cfg.training.visualize_eval:
-                            eval_reward, position_history = runner.eval_policy(
-                                policy, 
-                                visualize=True,
-                                eval_delay=cfg.training.eval_delay,
-                                eval_episode_length=cfg.env.episode_length,
-                            )
+                            try:
+                                eval_reward, position_history = runner.eval_policy(
+                                    policy, 
+                                    visualize=True,
+                                    eval_delay=cfg.training.eval_delay,
+                                    eval_episode_length=cfg.env.episode_length,
+                                )
+                            except Exception as e:
+                                logging.error(f"Visualization failed: {str(e)}")
+                                # Fallback to non-visual evaluation
+                                eval_reward = runner.eval_policy(
+                                    policy,
+                                    visualize=False,
+                                    eval_episode_length=cfg.env.episode_length,
+                                )
+                                position_history = None
                             
                             # Log additional metrics if using wandb
                             if cfg.log.use_wandb:

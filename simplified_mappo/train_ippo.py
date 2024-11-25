@@ -16,6 +16,7 @@ import logging
 import traceback
 from utils.visualization import render_env
 import matplotlib.pyplot as plt
+from envs import MPEEnv
 
 def calculate_movement_angle(velocity):
     """Calculate angle of movement in degrees from velocity vector"""
@@ -76,25 +77,22 @@ class RunningMeanStd:
 
 def make_env(cfg, render_mode=None):
     """
-    Create a Multi-Agent Particle Environment (MPE) using local implementation
+    Create a Multi-Agent Particle Environment (MPE) using MPEEnv wrapper
     """
-    # Get the scenario class from the scenarios
     print(f"Creating environment: {cfg.env.env_name}")
-    scenario = SCENARIOS[cfg.env.env_name]()
     
-    # Create world
-    world = scenario.make_world(num_agents=cfg.env.num_agents, num_landmarks=cfg.env.num_landmarks, episode_length=cfg.env.episode_length)
-    world.algorithm = cfg.algorithm
+    # Create environment using MPEEnv wrapper
+    env = MPEEnv(
+        scenario_name=cfg.env.env_name,
+        num_agents=cfg.env.num_agents,
+        episode_length=cfg.env.episode_length
+    )
     
-    # Get dimensions
-    obs_dim = len(scenario.observation(world.agents[0], world))
-    if cfg.env.has_continuous_action_space:
-        action_dim = world.dim_p  # Physical action dimension
-    else:
-        # For discrete actions, would need to be adjusted based on your needs
-        action_dim = 5  # Example: 5 discrete actions
+    # Get dimensions from environment
+    obs_dim = env.observation_space[0].shape[0]
+    action_dim = env.action_space[0].shape[0]
     
-    return world, obs_dim, action_dim, scenario
+    return env, obs_dim, action_dim
 
 def save_checkpoint(agents, model_dir_checkpoint, writer_dir):
     """
@@ -165,8 +163,9 @@ def train_ippo(
         logging.info(f"Environment: {cfg.env.env_name}")
         logging.info(f"Max episodes: {cfg.env.max_episodes}")
 
-        # Create env using local implementation
-        world, state_dim, action_dim, scenario = make_env(cfg, render_mode='human' if render else None)
+        # Create env using MPEEnv wrapper
+        env, state_dim, action_dim = make_env(cfg, render_mode='human' if render else None)
+        num_agents = cfg.env.num_agents  # Use num_agents from config
         
         # Set up model saving - create directories if they don't exist
         if not os.path.exists(cfg.log.model_dir): 
@@ -209,7 +208,7 @@ def train_ippo(
             PPO(state_dim=state_dim,
                 action_dim=action_dim,
                 cfg=cfg)
-            for _ in range(len(world.agents))
+            for _ in range(num_agents)  # Use num_agents instead of len(env.agents)
         ]
 
         # Handle model loading for different scenarios
@@ -256,10 +255,11 @@ def train_ippo(
         for i_episode in range(cfg.env.max_episodes):
             episode_seed = np.random.randint(0, 10000)
             
-            # Reset world using scenario instance
-            scenario.reset_world(world)
-            observations = {f'agent_{i}': scenario.observation(agent, world) 
-                           for i, agent in enumerate(world.agents)}
+            # Reset environment using gym interface
+            observations = env.reset()
+            # Convert observations to dict format if not already
+            if not isinstance(observations, dict):
+                observations = {f'agent_{i}': obs for i, obs in enumerate(observations)}
             
             current_ep_reward = 0
             current_ep_length = 0
@@ -268,44 +268,40 @@ def train_ippo(
                 actions = {}
                 
                 # Get actions for each agent
-                for i, agent in enumerate(world.agents):
+                for i in range(num_agents):  # Use num_agents instead of env.agents
                     agent_obs = observations[f'agent_{i}']
                     agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
                     action = ppo_agents[i].select_action(agent_state_tensor)
                     
                     if cfg.env.has_continuous_action_space:
                         action = action.flatten()
-                        # Scale actions properly and apply as force
-                        scaled_action = action * world.force_scale
-                        agent.action.u = scaled_action
-                        
-                        # Print angle for agent_0
-                        if i == 0:
-                            angle = calculate_movement_angle(action)
-                            #print(f"Agent 0 movement angle: {angle:.2f}°, Action: {action}")
+                        actions[f'agent_{i}'] = action
                     else:
                         action = int(action)
-                    
-                    actions[f'agent_{i}'] = action
+                        actions[f'agent_{i}'] = action
                 
-                # Step world
-                world.step()
+                # Convert actions dict to list for gym interface
+                action_list = [actions[f'agent_{i}'] for i in range(num_agents)]
                 
-                # Get new observations and rewards using scenario instance
-                next_observations = {f'agent_{i}': scenario.observation(agent, world) 
-                                   for i, agent in enumerate(world.agents)}
-                rewards = {f'agent_{i}': scenario.reward(agent, world) 
-                          for i, agent in enumerate(world.agents)}
+                # Step environment using gym interface
+                next_observations, rewards, dones, infos = env.step(action_list)
+                
+                # Convert observations and rewards to dict format if not already
+                if not isinstance(next_observations, dict):
+                    next_observations = {f'agent_{i}': obs for i, obs in enumerate(next_observations)}
+                if not isinstance(rewards, dict):
+                    rewards = {f'agent_{i}': reward for i, reward in enumerate(rewards)}
+                if not isinstance(dones, dict):
+                    dones = {f'agent_{i}': done for i, done in enumerate(dones)}
                 
                 # Calculate if episode should terminate
-                # You might want to add your own termination conditions
-                terminations = {f'agent_{i}': False for i in range(len(world.agents))}
+                terminations = dones
                 truncations = {f'agent_{i}': current_ep_length >= cfg.env.episode_length - 1 
-                              for i in range(len(world.agents))}
+                              for i in range(num_agents)}
                 
                 # Calculate average reward across all agents for this step
                 step_reward = sum(rewards.values()) / len(rewards)
-                current_ep_reward += step_reward  # Add average reward
+                current_ep_reward += step_reward
                 
                 # Normalize rewards
                 rewards_array = np.array(list(rewards.values()))
@@ -313,15 +309,17 @@ def train_ippo(
                 normalized_rewards = reward_normalizer.normalize(rewards_array)
                 
                 # Update buffers with normalized rewards
-                for i, (agent_idx, reward) in enumerate(zip(rewards.keys(), normalized_rewards)):
-                    agent = ppo_agents[i]  # Use index directly since it matches the agent order
+                for i, reward in enumerate(normalized_rewards):
+                    agent = ppo_agents[i]
                     agent.buffer.rewards.append(reward)
-                    agent.buffer.is_terminals.append(terminations[agent_idx] or truncations[agent_idx])
+                    agent.buffer.is_terminals.append(
+                        terminations[f'agent_{i}'] or truncations[f'agent_{i}']
+                    )
 
                 observations = next_observations
                 time_step += 1
                 current_ep_length += 1
-                global_step += 1  # Keep tracking global steps for logging
+                global_step += 1
 
                 # Log step metrics to wandb with global step
                 if cfg.log.use_wandb and time_step % cfg.log.log_freq == 0:
@@ -481,7 +479,7 @@ def train_ippo(
                     plt.ion()  # Turn on interactive mode
                     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
                     lines = []  # Store line objects for updating
-                    for agent_idx in range(len(world.agents)):
+                    for agent_idx in range(num_agents):
                         line, = ax2.plot([], [], label=f'Agent {agent_idx}')
                         lines.append(line)
                     ax2.set_xlabel('Step')
@@ -493,24 +491,26 @@ def train_ippo(
                 try:
                     # Evaluation loop
                     for eval_ep in range(5):
-                        scenario.reset_world(world)
+                        observations = env.reset()
+                        if not isinstance(observations, dict):
+                            observations = {f'agent_{i}': obs for i, obs in enumerate(observations)}
                         eval_ep_reward = 0
                         
-                        # Store initial positions
-                        if eval_ep == 0:  # Only track first episode in detail
+                        # Store initial positions if using MPE env
+                        if eval_ep == 0 and hasattr(env, 'world'):  
                             position_history['agents'].append(
-                                [agent.state.p_pos.copy() for agent in world.agents]
+                                [agent.state.p_pos.copy() for agent in env.world.agents]
                             )
                             position_history['landmarks'].append(
-                                [l.state.p_pos.copy() for l in world.landmarks]
+                                [l.state.p_pos.copy() for l in env.world.landmarks]
                             )
                             
                             # Calculate initial distances
                             distances = []
-                            for agent in world.agents:
+                            for agent in env.world.agents:
                                 agent_distances = [
                                     np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
-                                    for l in world.landmarks
+                                    for l in env.world.landmarks
                                 ]
                                 distances.append(agent_distances)
                             position_history['distances'].append(distances)
@@ -519,8 +519,9 @@ def train_ippo(
                             actions = {}
                             step_rewards = []
                             
-                            for i, agent in enumerate(world.agents):
-                                agent_obs = scenario.observation(agent, world)
+                            # Get actions for each agent
+                            for i in range(num_agents):  # Use num_agents instead of env.agents
+                                agent_obs = observations[f'agent_{i}']
                                 agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
                                 action = ppo_agents[i].select_action(agent_state_tensor, deterministic=True)
                                 action = np.clip(action, -1.0, 1.0)
@@ -530,51 +531,59 @@ def train_ippo(
                                         f'agent_{i}': {
                                             'action': action.copy(),
                                             'angle': calculate_movement_angle(action),
-                                            'position': agent.state.p_pos.copy(),
-                                            'velocity': agent.state.p_vel.copy()
+                                            'position': env.world.agents[i].state.p_pos.copy() if hasattr(env, 'world') else None,
+                                            'velocity': env.world.agents[i].state.p_vel.copy() if hasattr(env, 'world') else None
                                         }
                                     })
                                 
                                 actions[f'agent_{i}'] = action
-                                agent.action.u = action * world.force_scale
                             
-                            # Step world
-                            world.step()
+                            # Convert actions dict to list for gym interface
+                            action_list = [actions[f'agent_{i}'] for i in range(num_agents)]
+                            
+                            # Step environment
+                            next_observations, rewards, dones, infos = env.step(action_list)
+                            
+                            # Convert to dict format if needed
+                            if not isinstance(next_observations, dict):
+                                next_observations = {f'agent_{i}': obs for i, obs in enumerate(next_observations)}
+                            if not isinstance(rewards, dict):
+                                rewards = {f'agent_{i}': reward for i, reward in enumerate(rewards)}
+                            if not isinstance(dones, dict):
+                                dones = {f'agent_{i}': done for i, done in enumerate(dones)}
                             
                             # Track positions and distances after step
-                            if eval_ep == 0:
+                            if eval_ep == 0 and hasattr(env, 'world'):
                                 position_history['agents'].append(
-                                    [agent.state.p_pos.copy() for agent in world.agents]
+                                    [agent.state.p_pos.copy() for agent in env.world.agents]
                                 )
                                 position_history['landmarks'].append(
-                                    [l.state.p_pos.copy() for l in world.landmarks]
+                                    [l.state.p_pos.copy() for l in env.world.landmarks]
                                 )
                                 
-                                # Calculate distances to all landmarks for each agent
+                                # Calculate distances
                                 distances = []
-                                for agent in world.agents:
+                                for agent in env.world.agents:
                                     agent_distances = [
                                         np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
-                                        for l in world.landmarks
+                                        for l in env.world.landmarks
                                     ]
                                     distances.append(agent_distances)
                                 position_history['distances'].append(distances)
                             
-                            # Get rewards
-                            rewards = {f'agent_{i}': scenario.reward(agent, world) 
-                                     for i, agent in enumerate(world.agents)}
+                            # Track rewards
                             if eval_ep == 0:
                                 position_history['rewards'].append(rewards)
                             
                             eval_ep_reward += sum(rewards.values()) / len(rewards)
                             
-                            # Update visualization only for first episode
+                            # Update visualization
                             if cfg.training.visualize_eval and eval_ep == 0:
                                 # Clear axes but keep figure
                                 ax1.clear()
                                 
                                 # Update main visualization
-                                render_env(world, ax=ax1)
+                                render_env(env, ax=ax1)
                                 ax1.set_xlim(-1.5, 1.5)
                                 ax1.set_ylim(-1.5, 1.5)
                                 ax1.grid(True)
