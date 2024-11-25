@@ -79,6 +79,7 @@ def make_env(cfg, render_mode=None):
     Create a Multi-Agent Particle Environment (MPE) using local implementation
     """
     # Get the scenario class from the scenarios
+    print(f"Creating environment: {cfg.env.env_name}")
     scenario = SCENARIOS[cfg.env.env_name]()
     
     # Create world
@@ -467,69 +468,165 @@ def train_ippo(
             # Evaluate policy periodically
             if (i_episode + 1) % cfg.training.eval_frequency == 0:
                 eval_rewards = []
-                # Run multiple evaluation episodes
-                for eval_ep in range(5):  # Run 5 evaluation episodes
-                    scenario.reset_world(world)
-                    eval_ep_reward = 0
-                    
-                    # Create figure for visualization if needed
-                    if cfg.training.visualize_eval and eval_ep == 0:  # Only visualize first episode
-                        plt.figure(figsize=(8, 8))
-                    
-                    # Run one evaluation episode
-                    for step in range(cfg.env.episode_length):
-                        actions = {}
-                        for i, agent in enumerate(world.agents):
-                            agent_obs = scenario.observation(agent, world)
-                            agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
-                            # Use deterministic action selection for evaluation
-                            action = ppo_agents[i].select_action(agent_state_tensor, deterministic=True)
-                            action = np.clip(action, -1.0, 1.0)
+                position_history = {
+                    'agents': [],
+                    'landmarks': [],
+                    'distances': [],
+                    'rewards': [],
+                    'actions': []
+                }
+                
+                # Create figure once before evaluation starts
+                if cfg.training.visualize_eval:
+                    plt.ion()  # Turn on interactive mode
+                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+                    lines = []  # Store line objects for updating
+                    for agent_idx in range(len(world.agents)):
+                        line, = ax2.plot([], [], label=f'Agent {agent_idx}')
+                        lines.append(line)
+                    ax2.set_xlabel('Step')
+                    ax2.set_ylabel('Distance to Closest Landmark')
+                    ax2.legend()
+                    ax2.grid(True)
+                    plt.tight_layout()
+
+                try:
+                    # Evaluation loop
+                    for eval_ep in range(5):
+                        scenario.reset_world(world)
+                        eval_ep_reward = 0
+                        
+                        # Store initial positions
+                        if eval_ep == 0:  # Only track first episode in detail
+                            position_history['agents'].append(
+                                [agent.state.p_pos.copy() for agent in world.agents]
+                            )
+                            position_history['landmarks'].append(
+                                [l.state.p_pos.copy() for l in world.landmarks]
+                            )
                             
-                            # Print angle for agent_0 during evaluation
-                            if i == 0:
-                                angle = calculate_movement_angle(action)
-                                print(f"[EVAL] Agent 0 movement angle: {angle:.2f}°, Action: {action}")
+                            # Calculate initial distances
+                            distances = []
+                            for agent in world.agents:
+                                agent_distances = [
+                                    np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
+                                    for l in world.landmarks
+                                ]
+                                distances.append(agent_distances)
+                            position_history['distances'].append(distances)
+                        
+                        for step in range(cfg.env.episode_length):
+                            actions = {}
+                            step_rewards = []
                             
-                            actions[f'agent_{i}'] = action
-                            agent.action.u = action * world.force_scale  # Set physical action
-                        
-                        # Store previous positions for interpolation if visualizing
-                        if cfg.training.visualize_eval and eval_ep == 0:
-                            prev_positions = np.array([agent.state.p_pos.copy() for agent in world.agents])
-                            prev_velocities = np.array([agent.state.p_vel.copy() for agent in world.agents])
-                        
-                        # Step world
-                        world.step()
-                        
-                        # Visualize if needed
-                        if cfg.training.visualize_eval and eval_ep == 0:
-                            render_env(world)
-                            plt.pause(cfg.training.eval_delay)
-                        
-                        # Get rewards
-                        rewards = {f'agent_{i}': scenario.reward(agent, world) 
-                                 for i, agent in enumerate(world.agents)}
-                        eval_ep_reward += sum(rewards.values()) / len(rewards)
+                            for i, agent in enumerate(world.agents):
+                                agent_obs = scenario.observation(agent, world)
+                                agent_state_tensor = torch.FloatTensor(agent_obs).to(device)
+                                action = ppo_agents[i].select_action(agent_state_tensor, deterministic=True)
+                                action = np.clip(action, -1.0, 1.0)
+                                
+                                if eval_ep == 0:  # Track actions for first episode
+                                    position_history['actions'].append({
+                                        f'agent_{i}': {
+                                            'action': action.copy(),
+                                            'angle': calculate_movement_angle(action),
+                                            'position': agent.state.p_pos.copy(),
+                                            'velocity': agent.state.p_vel.copy()
+                                        }
+                                    })
+                                
+                                actions[f'agent_{i}'] = action
+                                agent.action.u = action * world.force_scale
+                            
+                            # Step world
+                            world.step()
+                            
+                            # Track positions and distances after step
+                            if eval_ep == 0:
+                                position_history['agents'].append(
+                                    [agent.state.p_pos.copy() for agent in world.agents]
+                                )
+                                position_history['landmarks'].append(
+                                    [l.state.p_pos.copy() for l in world.landmarks]
+                                )
+                                
+                                # Calculate distances to all landmarks for each agent
+                                distances = []
+                                for agent in world.agents:
+                                    agent_distances = [
+                                        np.sqrt(np.sum(np.square(agent.state.p_pos - l.state.p_pos))) 
+                                        for l in world.landmarks
+                                    ]
+                                    distances.append(agent_distances)
+                                position_history['distances'].append(distances)
+                            
+                            # Get rewards
+                            rewards = {f'agent_{i}': scenario.reward(agent, world) 
+                                     for i, agent in enumerate(world.agents)}
+                            if eval_ep == 0:
+                                position_history['rewards'].append(rewards)
+                            
+                            eval_ep_reward += sum(rewards.values()) / len(rewards)
+                            
+                            # Update visualization only for first episode
+                            if cfg.training.visualize_eval and eval_ep == 0:
+                                # Clear axes but keep figure
+                                ax1.clear()
+                                
+                                # Update main visualization
+                                render_env(world, ax=ax1)
+                                ax1.set_xlim(-1.5, 1.5)
+                                ax1.set_ylim(-1.5, 1.5)
+                                ax1.grid(True)
+                                
+                                # Update distance plot
+                                for agent_idx, line in enumerate(lines):
+                                    agent_distances = [d[agent_idx] for d in position_history['distances']]
+                                    min_distances = [min(d) for d in agent_distances]
+                                    line.set_data(range(len(min_distances)), min_distances)
+                                
+                                # Adjust distance plot limits
+                                ax2.relim()
+                                ax2.autoscale_view()
+                                
+                                # Update title with current step
+                                fig.suptitle(f'Step {step}/{cfg.env.episode_length}')
+                                
+                                # Refresh display
+                                fig.canvas.draw()
+                                fig.canvas.flush_events()
+                                plt.pause(cfg.training.eval_delay)
+
+                        eval_rewards.append(eval_ep_reward)
                     
-                    eval_rewards.append(eval_ep_reward)
-                    
-                    # Close visualization for this episode
-                    if cfg.training.visualize_eval and eval_ep == 0:
-                        plt.close()
-                
-                # Calculate average evaluation reward
-                avg_eval_reward = sum(eval_rewards) / len(eval_rewards)
-                
-                if cfg.log.use_wandb:
-                    eval_metrics = {
-                        "eval/reward": avg_eval_reward,
-                        "eval/reward_diff": avg_eval_reward - current_ep_reward,
-                        "eval/reward_std": np.std(eval_rewards)
-                    }
-                    wandb.log(eval_metrics, step=global_step)
-                
-                print(f"Evaluation at episode {i_episode + 1}: Average Reward = {avg_eval_reward:.2f}")
+                    # Close the figure after the first evaluation episode
+                    if cfg.training.visualize_eval:
+                        plt.close(fig)
+                        plt.ioff()  # Turn off interactive mode
+
+                    # Calculate average evaluation reward and log metrics
+                    avg_eval_reward = np.mean(eval_rewards)
+                    if cfg.log.use_wandb:
+                        # Calculate average distances over episode
+                        avg_distances = np.mean([
+                            [min(agent_distances) for agent_distances in step_distances]
+                            for step_distances in position_history['distances']
+                        ], axis=0)
+                        
+                        eval_metrics = {
+                            "eval/reward": avg_eval_reward,
+                            "eval/reward_std": np.std(eval_rewards),
+                            **{f"eval/agent_{i}_avg_distance": dist for i, dist in enumerate(avg_distances)},
+                            "eval/max_distance": np.max([max(d) for d in position_history['distances']]),
+                            "eval/min_distance": np.min([min(d) for d in position_history['distances']])
+                        }
+                        wandb.log(eval_metrics, step=global_step)
+
+                except Exception as e:
+                    if cfg.training.visualize_eval:
+                        plt.close(fig)
+                        plt.ioff()
+                    raise e
 
         # Calculate final average reward
         final_avg_reward = log_running_reward / log_running_episodes if log_running_episodes > 0 else 0

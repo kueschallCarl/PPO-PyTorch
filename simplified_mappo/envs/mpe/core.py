@@ -56,12 +56,24 @@ class World(object):
         
     def step(self):
         for agent in self.agents:
-            # Apply damping to maintain some momentum
+            # First clip the action/force
+            agent.action.u = np.clip(agent.action.u, -1.0, 1.0)
+            
+            # Apply damping to current velocity before adding new force
             agent.state.p_vel *= self.damping
-            # Then apply new action
-            agent.state.p_vel += agent.action.u * self.force_scale * self.dt
-            agent.state.p_vel = np.clip(agent.state.p_vel, -1.0, 1.0)
+            
+            # Add new force with scaled influence
+            force = agent.action.u * self.force_scale * self.dt
+            agent.state.p_vel += force
+            
+            # Clip velocity with stricter bounds
+            agent.state.p_vel = np.clip(agent.state.p_vel, -0.5, 0.5)  # Reduced velocity limits
+            
+            # Update position
             agent.state.p_pos += agent.state.p_vel * self.dt
+            
+            # Clip position
+            agent.state.p_pos = np.clip(agent.state.p_pos, -1.0, 1.0)
 
     def get_obs(self, agent):
         # get positions of all entities in this agent's reference frame

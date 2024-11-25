@@ -10,7 +10,6 @@ def render_env(world, ax=None):
         ax: Optional matplotlib axis to render on. If None, uses current axis
     """
     if ax is None:
-        plt.clf()
         ax = plt.gca()
     
     # Plot landmarks
@@ -30,5 +29,4 @@ def render_env(world, ax=None):
     ax.set_xlim(-1.5, 1.5)
     ax.set_ylim(-1.5, 1.5)
     ax.legend()
-    ax.grid(True)
-    plt.pause(world.dt) 
+    ax.grid(True) 

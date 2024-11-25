@@ -8,7 +8,7 @@ from datetime import datetime
 class EnvConfig:
     """Configuration for the environment settings"""
     """Possible environments: simple_spread, simple_reference, simple_speaker_listener"""
-    env_name: str = "simple_spread"  # Name of the environment to train in
+    env_name: str = "simple"  # Name of the environment to train in
     num_agents: int = 3              # Number of agents in environment
     episode_length: int = 100         # Length of each episode
     max_episodes: int = 1000         # Maximum number of episodes
@@ -65,7 +65,7 @@ class TrainingConfig:
     num_updates: int = 80
     eval_frequency: int = 100
     action_std_decay_freq: int = 1000
-    action_std_decay_rate: float = 0.01
+    action_std_decay_rate: float = 0.005
     min_action_std: float = 0.1
     visualize_eval: bool = True  # Whether to visualize one evaluation episode
     eval_delay: float = 0.05      # Delay between steps during evaluation visualization

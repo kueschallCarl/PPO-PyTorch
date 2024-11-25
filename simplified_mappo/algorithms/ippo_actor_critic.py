@@ -37,7 +37,7 @@ class ActorCritic(nn.Module):
     def act(self, state):
         if self.has_continuous_action_space:
             action_mean = self.actor(state)
-            std = self.log_std.exp()
+            std = torch.clamp(self.log_std.exp(), min=0.01, max=1.0)  # Clamp std
             
             # Use independent Normal distributions with proper scaling
             dist = torch.distributions.Normal(action_mean, std)
@@ -50,6 +50,11 @@ class ActorCritic(nn.Module):
             
             # Ensure actions are properly scaled
             action = torch.tanh(action)  # Squash to [-1, 1]
+            
+            # Add noise clipping
+            if torch.isnan(action).any():
+                action = torch.nan_to_num(action, 0.0)
+                action = torch.clamp(action, -1.0, 1.0)
         else:
             action_probs = self.actor(state)
             dist = Categorical(action_probs)
